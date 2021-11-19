@@ -1,0 +1,768 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+'''
+Author : Sara Willis
+Date   : October 18, 2021
+'''
+
+import subprocess, sys, os, random, datetime, getopt, math, re
+
+'''
+------------------------------------------------------------------------------------------
+                                   Vis Options
+Options for colors and usage symbols. Cycle is used to give a set of 256 colors for the
+--nodes option. This allows for color coding the different jobs running on a compute node
+'''
+def vis_options(seed=None):
+    COLOR="\033[38;5;%dm"
+    DOWNCOLOR="\033[0;31m"
+    DOWNUSEDCOLOR=COLOR%int(181)
+    ENDCOLOR="\033[0m"
+    cycle = [COLOR%i for i in range(0,256)]
+    # Do you want to set the colors to be deterministic (True) or random each time (False)?
+    if seed == None:
+        random.seed(110)
+    if seed != None:
+        random.seed(seed)
+    random.shuffle(cycle)
+    utf8_char = u'\u258B'
+    ascii_char = '#'
+    return ENDCOLOR,DOWNCOLOR, cycle, utf8_char, ascii_char,DOWNUSEDCOLOR
+
+
+
+'''
+------------------------------------------------------------------------------------------
+                                     Job Options
+Options include --user=username, --partition=queue, --help, and --node=nodename, --ascii
+'''
+def args(argv):
+    partition=user=group=node=None
+    all_nodes=color_random=use_ascii=False
+    try:
+        opts,args = getopt.getopt(argv, "harp:u:n:g:",["help","all","randomize","ascii","partition=","user=","group=","node="])
+        if len(opts) ==0:
+            return partition, user, group, node, all_nodes,color_random, use_ascii
+    except getopt.GetoptError:
+        print("Unrecognized Option")
+        usage(1)
+        #return partition, user, node
+    for opt, arg in opts:
+        if opt in ("-h","--help"):
+            usage(0)
+        elif opt in ("-p","--partition"):
+            partition = arg.lower()
+        elif opt in ("-u","--user"):
+            user = arg.lower() 
+        elif opt in ("-n","--node"):
+            node = arg.lower()
+        elif opt in ("-a","--all"):
+            all_nodes = True
+        elif opt in ("-g","--group"):
+            group = arg.lower()
+        elif opt in ("-r","--randomize"):
+            color_random = True
+        elif opt == "--ascii":
+            use_ascii=True
+        else:
+            print("Unrecognized option.")
+            usage(1)
+    if [partition,user,group,node].count(None) < 3:
+        print("Too many options specified")
+        usage(1)
+    return partition,user,group, node,all_nodes,color_random, use_ascii
+
+
+'''
+------------------------------------------------------------------------------------------
+                                      Usage
+Only used to print the usage message. Exits with provided value after print
+'''
+def usage(exit_value):
+    print("Usage: nodes-busy [--OPTION=VALUE|--VIS_OPTIONS|--help]")
+    print("\nValid OPTION/VALUE combinations   : Only one OPTION/VALUE can be specified")
+    print("   --partiton=standard|windfall   : Highlights all CPUs/GPUs reserved by specified partition")
+    print("   --user=netid                   : Highlights all CPUs/GPUs reserved by <netid>'s jobs")
+    print("   --group=gid                    : Highlights all CPUs/GPUs reserved by <gid>'s jobs")
+    print("\nValid VIS_OPTIONS                 : Optional. More than one can be selected")
+    print("   --ascii                        : Use ascii encoding instead of utf-8. Can resolve formatting")
+    print("                                  : issues (e.g. in OOD terminals)")
+    print("   --random                       : Just for fun, mix up the color display")
+    print("   --all                          : Include all system nodes in --user and --group output")
+    sys.exit(exit_value)
+
+
+
+
+'''
+------------------------------------------------------------------------------------------
+                                  Splitting Node Names
+Slurm tries to make for nice output by representing nodes in formats like:
+cpu1,cpu31,cpu[45-46,48,51-55],cpu[57-58],cpu[59-60,63],cpu[70,74]...
+which is a bummer to parse. This function is dedicated to untangling this
+'''
+def split_node_format(node,cpus):
+    split_nodes = []
+    nodes = node.split(",")
+    clustered = False
+    for item in nodes:
+       if "-" not in item:
+           if clustered == False:
+               if "[" not in item:
+                   split_nodes.append((item,cpus))
+               else:
+                   clustered = True
+                   split_node = item.split("[")
+                   prefix = split_node[0]
+                   if "]" in split_node[1]:
+                       clustered = False
+                   reformatted_node = prefix + split_node[1].replace("]","")
+                   split_nodes.append((reformatted_node,cpus))
+           else:
+               if "]" in item:
+                   clustered = False
+               reformatted_node = prefix + item.replace("]","")
+               split_nodes.append((reformatted_node,cpus))
+       else:
+           if "[" in item:
+               clustered = True
+               split_item = item.split("[")
+               prefix = split_item[0]
+               indices = split_item[1]
+               if "]" in indices:
+                   clustered= False
+               split_indices = indices.replace("]","").split("-")
+               indices_range = range(int(split_indices[0]),int(split_indices[1])+1)
+               for i in indices_range:
+                   reformatted_node = prefix + str(i)
+                   split_nodes.append((reformatted_node,cpus))
+           else:
+               indices = item
+               if "]" in indices:
+                   clustered = False
+               split_indices = indices.replace("]","").split("-")
+               indices_range = range(int(split_indices[0]),int(split_indices[1])+1)
+               for i in indices_range:
+                   reformatted_node = prefix + str(i)
+                   split_nodes.append((reformatted_node,cpus))
+    return split_nodes
+
+
+
+
+'''
+------------------------------------------------------------------------------------------
+                                 Pull Job Data
+Uses "scontrol show job -d --oneliner" to grab detailed data on every job running on the 
+cluster. Specs are pulled from these to determine the number of GPUs, CPUs, etc. reserved. 
+Also pulls the job queue for the --partition option.
+'''
+def get_scontrol_job_data(target_job = None):
+    fields = ["JobId","Partition","Restarts","EndTime","TimeLimit","NodeList","NumNodes","NumCPUs","NumTasks","TRES","JOB_GRES","Nodes","Features","CPU_IDs"]
+    job_data = {}
+    if target_job == None:
+        p = subprocess.Popen(['scontrol show job -d --oneliner | grep "JobState=RUNNING"'],stdout=subprocess.PIPE, shell=True)
+    else:
+        p = subprocess.Popen(['scontrol show job -d --oneliner '+target_job+' | grep "JobState=RUNNING"'],stdout=subprocess.PIPE,stderr=subprocess.PIPE, shell=True)
+    out,err = p.communicate()
+    if err != None and err.decode("utf-8") != "":
+        print("Oops, something has gone wrong!\nIf you've included a Job ID, check that it's valid and try again.")
+        sys.exit(1)
+    output = out.decode('utf-8').split("\n")
+    for job in output:
+        details = job.split(' ')
+        for i in details:
+            job_entry = i.split("=")
+            if job_entry[0] in fields:
+                if job_entry[0] == "JobId":
+                    JobId = job_entry[1]
+                    job_data[JobId] = {"Individual Nodes" : {}}
+                elif job_entry[0] =="Nodes":
+                    current_node = job_entry[1]
+                    job_data[JobId]["Individual Nodes"][current_node] = None
+                elif job_entry[0] == "CPU_IDs":
+                    cpus_assigned = 0
+                    ids = job_entry[1].split(',')
+                    for ID_set in ids:
+                        split_set = ID_set.split("-")
+                        if len(split_set) == 1:
+                            cpus_assigned +=1
+                        else:
+                            cpus_assigned += len(range(int(split_set[0]),int(split_set[1]))) + 1
+                    job_data[JobId]["Individual Nodes"][current_node] = cpus_assigned
+                elif job_entry[0] == "JOB_GRES":
+                    gpu_opts = job_entry[1]
+                    if gpu_opts == "(null)":
+                        job_data[JobId]["GPUAlloc"] = 0
+                    elif gpu_opts == "gpu":
+                        job_data[JobId]["GPUAlloc"] = 1
+                    else:
+                        job_data[JobId]["GPUAlloc"] = gpu_opts.split(":")[-1]
+
+                else:
+                    entry_label = job_entry[0]
+                    entry_data = job_entry[1]
+                    job_data[JobId][entry_label] = entry_data
+        # Catch all instances of node name reformatting so the jobs can be
+        # matched 
+        remove, add = [],[]
+        for entry,cpus in job_data[JobId]["Individual Nodes"].items():
+            if "," in entry or "[" in entry:
+                remove.append(entry)
+                nodes = split_node_format(entry,cpus)
+                add += nodes
+        for entry in remove:
+            job_data[JobId]["Individual Nodes"].pop(entry)
+        for entry in add:
+            job_data[JobId]["Individual Nodes"][entry[0]] = entry[1]
+    return job_data
+
+
+
+'''
+------------------------------------------------------------------------------------------
+                                  Get Node Data
+Get all data from nodes and arrange into dictionary. This can be merged with the job data 
+to get comprehensive information about system use.
+'''
+def get_scontrol_node_data():
+    node_data = {"REASONS":{}}
+    n = 1
+    fields = ["NodeName","CPUAlloc","CPUTot","AvailableFeatures","ActiveFeatures","AllocTRES","AllocTRES","CfgTRES","State","Reason"]
+    p = subprocess.Popen(['scontrol show nodes --all --oneliner'],stdout=subprocess.PIPE,shell=True)
+    out,err = p.communicate()
+    node_output = out.decode('utf-8').split("\n")
+    for i in node_output:
+        node_specs = i.split(" ")
+        for j in node_specs:
+            field = j.split("=")[0]
+            if field in fields:
+                if field == "NodeName":
+                    Node_Name = j.split("=")[-1]
+                    node_data[Node_Name]={"Node_Type":"Standard"}
+                elif field == "AllocTRES" or field == "CfgTRES":
+                    if "gpu" in j:
+                        node_data[Node_Name]["Node_Type"] = "GPU"
+                        gpu_count = j.split("gpu")[-1].split("=")[-1]
+                        node_data[Node_Name][field] = gpu_count
+                elif field == "AvailableFeatures":
+                    available_features = j.split("=")[-1]
+                    if available_features == "hi_mem":
+                        node_data[Node_Name]["Node_Type"] = "HiMem"
+                # Reasons may include spaces and the node specs are space-delimited
+                # (sigh), so this gets the full reason through brute force
+                elif field == "Reason":
+                    reason = i.split("Reason=")[-1].split(" Comment=")[0] #.split("[root")[0]
+                    removal = re.search('\[[^\]]*\]',reason)
+                    initiator = removal.group(0)
+                    reason = reason.replace(initiator,"")
+                    if reason not in node_data["REASONS"]:
+                        node_data["REASONS"][reason]=n
+                        node_data[Node_Name]["Reason"] =n
+                        n+=1
+                    else:
+                        node_data[Node_Name]["Reason"] =node_data["REASONS"][reason]
+                elif field == "State":
+                    state = j.split("=")[-1]
+                    if "DOWN" in state:
+                        node_data[Node_Name]["State"] = "DOWN"
+                    elif "DRAIN" in state:
+                        node_data[Node_Name]["State"] = "DRAIN"
+                    else:
+                        node_data[Node_Name]["State"]="UP"
+                else:
+                    node_data[Node_Name][field] = j.split("=")[-1]
+    return node_data
+
+
+
+'''
+------------------------------------------------------------------------------------------
+                                   Get User Job IDs
+If the --user option is supplied, that user's job IDs are pulled and returned as a list
+'''
+def get_user_jobids(username,group):
+    user_job_data = []
+    if username != None:
+        p = subprocess.Popen(['squeue --noheader --states=RUNNING -o %A --user '+username],stdout=subprocess.PIPE, shell=True)
+    elif group != None:
+        p = subprocess.Popen(['squeue --noheader --states=RUNNING -o %A --account '+group],stdout=subprocess.PIPE, shell=True)
+    out,err = p.communicate()
+    user_jobs = out.decode('utf-8').split("\n")
+    for job in user_jobs:
+        formatted_job = [i for i in job.split(" ") if i != ""]
+        if len(formatted_job) != 0:
+            JobID = formatted_job[0]
+            Job_Components = JobID.split("_")
+            Job_Base = Job_Components[0]
+            try:
+                # IDs are reformatted in the event of job arrays
+                Job_indices = Job_Components[1].replace("[","").replace("]","")
+                Indices_boundaries = Job_indices.split("-")
+                Full_indices = range(int(Indices_boundaries[0]),int(Indices_boundaries[1])+1)
+                for index in Full_indices:
+                    Full_job_id = Job_Base+"_"+str(index)
+                    user_job_data.append(Full_job_id)
+            except IndexError:
+                user_job_data.append(JobID)
+    return user_job_data
+
+
+
+
+'''
+------------------------------------------------------------------------------------------
+                                          Merge
+Merge the jobs and nodes dictionary together to get comprehensive data on system use. 
+'''
+def merge(jobs_dictionary, nodes_dictionary):
+    for job in jobs_dictionary.keys():
+        for node,cpus in jobs_dictionary[job]["Individual Nodes"].items():
+            if "JOBS" not in nodes_dictionary[node].keys():
+                nodes_dictionary[node]["JOBS"] = {}
+            nodes_dictionary[node]["JOBS"][job] = {"CPUs":cpus, "GPUs":jobs_dictionary[job]["GPUAlloc"],"EndTime":jobs_dictionary[job]["EndTime"],"Partition":jobs_dictionary[job]["Partition"],"Restarts":jobs_dictionary[job]["Restarts"]}
+    return nodes_dictionary
+
+
+
+
+
+'''
+------------------------------------------------------------------------------------------
+                                         Usage Bar
+Create a usage bar for each node, highlighting any CPUs or GPUs based on user options
+'''
+def usage_bar(usage_block,num_used,num_highlighted,total_cpus,state,seed):
+    ENDCOLOR,DOWNCOLOR, cycle, utf8_char, ascii_char, DOWNUSEDCOLOR = vis_options(seed)
+    highlight_color = cycle[0]
+    if state in ["DOWN","DRAIN"]:
+        highlight_color=DOWNUSEDCOLOR
+        unhighlight_color = DOWNCOLOR
+    else:
+        unhighlight_color = ENDCOLOR
+    used = int(num_used)
+    highlighted = int(num_highlighted)
+    unhighlighted = used - num_highlighted
+    total_cpus = int(total_cpus)
+    blank = total_cpus - used
+
+    usage = unhighlight_color+"["+usage_block*unhighlighted+highlight_color+usage_block*highlighted+unhighlight_color+" "*blank+"]"+ENDCOLOR
+    return usage
+
+
+'''
+------------------------------------------------------------------------------------------
+                                        Highlight
+In case --user or --partition has been included, the CPUs/GPUs associated with the request
+need to be highlighted with a color. This grabs the number that need to be highlighted
+'''
+def highlight(node_list, node_dictionary, partition, user,group):
+    if partition != None:
+        for data in node_list:
+            node,CPUAlloc = data
+            highlighted_cpus = 0
+            highlighted_gpus = 0
+            try:
+                for job,job_data in node_dictionary[node]["JOBS"].items():
+                    if job_data["Partition"] == partition:
+                        highlighted_cpus += int(job_data["CPUs"])
+                        highlighted_gpus += int(job_data["GPUs"])
+                    else:
+                        pass
+            except KeyError:
+                highlighted_cpus = 0
+                highlighted_gpus = 0
+            node_dictionary[node]["highlighted_cpus"] = highlighted_cpus
+            node_dictionary[node]["highlighted_gpus"] = highlighted_gpus
+    elif user != None or group != None:
+        user_job_list = get_user_jobids(user,group)
+        for data in node_list:
+            node,CPUAlloc = data
+            highlighted_cpus =0
+            highlighted_gpus =0
+            try:
+                for job, job_data in node_dictionary[node]["JOBS"].items():
+                    if job in user_job_list:
+                        highlighted_cpus += int(job_data["CPUs"])
+                        highlighted_gpus += int(job_data["GPUs"])
+                    else:
+                        pass
+            except KeyError:
+                highlighted_cpus = 0
+                highlighted_gpus = 0
+            node_dictionary[node]["highlighted_cpus"] = highlighted_cpus
+            node_dictionary[node]["highlighted_gpus"] = highlighted_gpus
+    else:
+        for data in node_list:
+            node,CPUAlloc = data
+            highlighted_cpus = 0
+            highlighted_gpus = 0
+            node_dictionary[node]["highlighted_cpus"] = highlighted_cpus
+            node_dictionary[node]["highlighted_gpus"] = highlighted_gpus
+
+    return node_dictionary
+
+
+'''
+------------------------------------------------------------------------------------------
+                                   Format String
+Create a formatted string for printing output.
+'''
+def format_string(down,gpu,max_cpus,DOWNCOLOR,ENDCOLOR,max_gpus=None):
+    if down == True and gpu == False:
+        formatting_string = DOWNCOLOR + "{0:7}:{1:"+str(max_cpus+2)+"}"+DOWNCOLOR+" {2:>5} {3:6}[{4:1}]"+ENDCOLOR
+    elif down == False and gpu == False:
+        # Expecting input (node name, usage bar, percentage)
+        formatting_string = formatting_string ="{0:7}:{1:"+str(max_cpus+2)+"} {2:*>5}"
+    elif down == True and gpu == True:
+        # Expecting input (node name, usage bar, percentage, GPU usage bar, GPU percentage, state, reason index)
+        formatting_string = DOWNCOLOR+"{0:7}:{1:"+str(max_cpus+2)+"}"+DOWNCOLOR+" {2:>5} {3:"+str(max_gpus+2)+"} "+DOWNCOLOR+"{4:>5} {5:6}[{6:1}]" + ENDCOLOR
+    elif down == False and gpu == True:
+        # Expecting input (node name, usage bar, percentage, GPU usage bar, GPU percentage)
+        formatting_string = "{0:7}:{1:"+str(max_cpus+2)+"} {2:>6} {3:"+str(int(max_gpus)+3)+"} {4:<6}"
+    return formatting_string
+
+
+
+'''
+------------------------------------------------------------------------------------------
+                                      Display
+Goes through the whole process of sorting data, highlighting, checking user options, 
+getting usage bar, and printing headers/formatting etc. 
+'''
+def display(node_specs,job_options,seed=None):
+    partition,user,group,node,all_nodes,color_random,use_ascii = job_options
+    ENDCOLOR,DOWNCOLOR, cycle, utf8_char, ascii_char, DOWNUSEDCOLOR = vis_options(seed)
+    high_mem_nodes = []
+    gpu_nodes      = []
+    standard_nodes = []
+    # Group and sort nodes by type and usage
+    max_cpus = 0
+    max_cpu_gpu_nodes = 0
+    max_gpus = 0
+    for key,data in node_specs.items():
+        if key == "REASONS":
+            pass
+        else:
+            Node_Type = data["Node_Type"]
+            CPUAlloc = int(data["CPUAlloc"])
+            TotalCPU = int(data["CPUTot"])
+            try:
+                TotalGPU = int(data["CfgTRES"])
+                if TotalCPU > max_cpu_gpu_nodes:
+                    max_cpu_gpu_nodes = TotalCPU
+            except KeyError:
+                TotalGPU = 0
+            if TotalGPU > max_gpus:
+                max_gpus = TotalGPU
+            if TotalCPU > max_cpus:
+                max_cpus = TotalCPU
+            if Node_Type == "Standard":
+                standard_nodes.append((key,CPUAlloc))
+            elif Node_Type == "GPU":
+                gpu_nodes.append((key,CPUAlloc))
+            elif Node_Type == "HiMem":
+                 high_mem_nodes.append((key,CPUAlloc))
+    standard_nodes.sort(key=lambda x: x[1], reverse=True)
+    gpu_nodes.sort(key=lambda x: x[1], reverse=True)
+    high_mem_nodes.sort(key=lambda x: x[1], reverse=True)
+    # First step: want highlighted cpus based on job options
+    #partition,user,group,node,all_nodes = job_options
+    node_specs = highlight(standard_nodes,node_specs,partition,user,group)
+    # Some formatting requires we know max cpu count
+    width = max_cpus + 30
+    today = datetime.datetime.now()
+    time_string = "%s"%today.strftime("%a %b %d, %I:%M:%S %p (MST) %G")
+    time_string_length = len(time_string)
+    time_spacing = math.ceil(width/2) - math.ceil(time_string_length/2)
+    heading_string = " System Status "
+    heading_spacing = math.ceil(width/2) - math.ceil((len(heading_string)+2)/2)
+    if use_ascii == False:
+        block = utf8_char
+    else:
+        block = ascii_char
+    print("="*width)
+    # if anything is wonky with the user's environment (e.g. the python encoding 
+    # variable is set to use ascii, this will catch it. The option to manually
+    # specify ascii was added after discovering the terminal through OOD won't
+    # accept the utf-8 block without doing some very strange things.
+    try:
+        print("\n"+" "*heading_spacing +  block + heading_string + block)
+    except UnicodeEncodeError:
+        block = ascii_char
+        print("\n"+" "*heading_spacing +  block + heading_string + block)
+    print(" "*time_spacing + time_string)
+    if partition != None:
+        partition_string = "Highlighting resources reserved by the %s partition"%partition
+        partition_spacing = math.ceil(width/2) - math.ceil(len(partition_string)/2)
+        print(cycle[0]+" "*partition_spacing + partition_string + ENDCOLOR)
+    elif user != None:
+        user_string = "Highlighting resources reserved by user: %s"%user
+        user_spacing = math.ceil(width/2) - math.ceil(len(user_string)/2)
+        print(cycle[0]+" "*user_spacing + user_string + ENDCOLOR)
+
+    # Display Standard Nodes
+    print("\nStandard Nodes")
+    print("="*width)
+    jobs_found = False
+    for data in standard_nodes:
+        node,CPUAlloc = data
+        highlighted = node_specs[node]["highlighted_cpus"]
+        if (user != None or group != None) and highlighted == 0 and all_nodes==False:
+            pass
+        else:
+            jobs_found = True
+            total_cpus = node_specs[node]["CPUTot"]
+            if total_cpus == 96 or total_cpus == "96":
+                total_cpus = 94
+            percentage = str(round(100*(int(CPUAlloc)/int(total_cpus)),2))+"%"
+            percentage = " "*(6-len(percentage))+percentage
+            state = node_specs[node]["State"]
+            usage = usage_bar(block,CPUAlloc,highlighted,total_cpus,state,seed)
+            # Need to add section to catch ascii formatting. Right now assumes utf8
+            if state not in ["DOWN","DRAIN"]:
+                formatting_string = format_string(False,False,max_cpus,DOWNCOLOR,ENDCOLOR)
+                print(formatting_string.format(node,usage,percentage))
+            else:
+                reason = node_specs[node]["Reason"]
+
+                formatting_string = format_string(True,False,max_cpus,DOWNCOLOR,ENDCOLOR)
+                print(formatting_string.format(node,usage,percentage,state,reason))
+    if jobs_found == False and user != None:
+        print("No user jobs found")
+    if jobs_found == False and group != None:
+        print("No jobs matching %s group"%group)
+    elif jobs_found == False and user == None:
+        print("No nodes found")
+
+    # Display GPU Nodes
+    print("\nGPU Nodes")
+    heading_string = "{0:9} {1:>%d}"%(max_cpu_gpu_nodes+10)
+    print(heading_string.format("CPU Usage","GPU Usage"))
+    print("="*width)
+    jobs_found = False
+    node_specs = highlight(gpu_nodes,node_specs,partition,user,group)
+    for data in gpu_nodes:
+        node,CPUAlloc = data
+        highlighted = node_specs[node]["highlighted_cpus"]
+        highlighted_gpus = node_specs[node]["highlighted_gpus"]
+        if (user != None or group != None) and highlighted == 0 and all_nodes == False:
+            pass
+        else:
+            jobs_found = True
+            total_cpus = node_specs[node]["CPUTot"]
+            if total_cpus == 96 or total_cpus == "96":
+                total_cpus = 94
+            cpu_percentage = str(round(100*(int(CPUAlloc)/int(total_cpus)),2))+"%"
+            state = node_specs[node]["State"]
+            usage = usage_bar(block,CPUAlloc,highlighted,total_cpus,state,seed)
+
+
+            # Retrieve GPU usage 
+            try:
+                total_gpus_used = sum([int(job["GPUs"]) for job in node_specs[node]["JOBS"].values()])
+            except KeyError:
+                total_gpus_used = 0
+            total_gpus = node_specs[node]["CfgTRES"]
+            gpu_usage = usage_bar(block,total_gpus_used,highlighted_gpus,total_gpus,state,seed)+" "*(int(max_gpus)-int(total_gpus)+2)
+            gpu_percentage = str(round(100*(int(total_gpus_used)/int(total_gpus)),2))+"%"
+            gpu_percentage = " "*(6-len(gpu_percentage))+gpu_percentage
+            if state not in ["DOWN","DRAIN"]:
+                formatting_string = format_string(False,True,max_cpu_gpu_nodes,DOWNCOLOR,ENDCOLOR,max_gpus)
+                print(formatting_string.format(node,usage,cpu_percentage,gpu_usage,gpu_percentage))
+            else:
+                reason = node_specs[node]["Reason"]
+                formatting_string = format_string(True,True,max_cpu_gpu_nodes,DOWNCOLOR,ENDCOLOR,max_gpus)
+                print(formatting_string.format(node,usage,cpu_percentage,gpu_usage,gpu_percentage,state,reason))
+    if jobs_found == False and user != None:
+        print("No user jobs found")
+    elif jobs_found == False and group != None:
+        print("No jobs matching %s group"%group)
+    elif jobs_found == False and user == None:
+        print("No nodes found")
+
+    print("\nHigh Memory Nodes")
+    print("="*width)
+    jobs_found = False
+    node_specs = highlight(high_mem_nodes,node_specs,partition,user,group)
+    for data in high_mem_nodes:
+        node,CPUAlloc = data
+        highlighted = node_specs[node]["highlighted_cpus"]
+        if (user != None or group != None) and highlighted == 0 and all_nodes == False:
+            pass
+        else:
+            jobs_found = True
+            total_cpus = node_specs[node]["CPUTot"]
+            if total_cpus == 96 or total_cpus == "96":
+                total_cpus = 94
+            percentage = str(round(100*(int(CPUAlloc)/int(total_cpus)),2))+"%"
+            percentage = " "*(6-len(percentage))+percentage
+            state = node_specs[node]["State"]
+            usage = usage_bar(block,CPUAlloc,highlighted,total_cpus,state,seed)
+            # Need to add section to catch ascii formatting. Right now assumes utf8
+            if state not in ["DOWN","DRAIN"]:
+                formatting_string = format_string(False,False,max_cpus,DOWNCOLOR,ENDCOLOR)
+                print(formatting_string.format(node,usage,percentage))
+            else:
+                reason = node_specs[node]["Reason"]
+
+                formatting_string = format_string(True,False,max_cpus,DOWNCOLOR,ENDCOLOR)
+                print(formatting_string.format(node,usage,percentage,state,reason))
+    if jobs_found == False and user != None:
+        print("No user jobs found")
+    elif jobs_found == False and group != None:
+        print("No jobs matching %s group"%group)
+    elif jobs_found == False and user == None:
+        print("No nodes found")
+
+
+    # Reasons
+    print("\n\nDown/Drain* Node Reasons")
+    print("="*width)
+    for i,j in node_specs["REASONS"].items():
+        print("[%s] %s"%(j,i))
+    print("\n\n* Nodes in the DRAIN state will wait for all running jobs to complete\nand will not accept new jobs until they shut down and restarted\n")
+    return
+
+
+def single_node_display(node,node_dictionary,seed):
+    ENDCOLOR,DOWNCOLOR, cycle, utf8_char, ascii_char, DOWNUSEDCOLOR= vis_options(seed)
+    block = utf8_char
+    if node not in node_dictionary.keys():
+        print("Oops! Node not found on cluster. Check your input and try again.")
+        usage(1)
+    message = "Displaying usage for info for node: %s"%node
+    try:
+        print("\n%s %s %s"%(block, message,block))
+    except UnicodeEncodeError:
+        block = ascii_char
+        print("\n%s %s %s"%(block, message,block))
+    print("="*len(message))
+    node_specific_dictionary = node_dictionary[node]
+    state = node_specific_dictionary['State']
+    node_type = node_specific_dictionary["Node_Type"]
+    if state in ["DOWN","DRAIN"]:
+        for r,index in node_dictionary["REASONS"].items():
+           if node_specific_dictionary["Reason"] == index:
+               reason = r
+               break
+    del node_dictionary
+    total_cpus = int(node_specific_dictionary["CPUTot"])
+    n = 0
+    cpu_usage_bar = "["
+    try:
+        for job,data in node_specific_dictionary["JOBS"].items():
+            color = cycle[n]
+            node_specific_dictionary["JOBS"][job]["color"] = color
+            num_cpus = int(data["CPUs"])
+            cpu_usage_bar += color + block * num_cpus + ENDCOLOR
+            n += 1
+    except KeyError:
+        pass
+    used_cpus = int(node_specific_dictionary["CPUAlloc"])
+    unused_cpus = total_cpus - used_cpus
+    cpu_usage_bar = cpu_usage_bar + " "*unused_cpus+ "]"
+    used_gpus = 0
+    # Get GPUs if applicable
+    if node_type == "GPU":
+        total_gpus = int(node_specific_dictionary["CfgTRES"])
+        gpu_usage_bar = "["
+        try:
+            for job,data in node_specific_dictionary["JOBS"].items():
+                color = data["color"]
+                num_gpus = int(data["GPUs"])
+                used_gpus += num_gpus
+                gpu_usage_bar += color + block * num_gpus + ENDCOLOR
+        except KeyError:
+            pass
+        unused_gpus = total_gpus - used_gpus
+        gpu_usage_bar = gpu_usage_bar + " "*unused_gpus +"]"
+        gpu_percentage_usage = str(round(100*(used_gpus/total_gpus),2)) + "%"
+    percentage_usage = str(round(100*(used_cpus/total_cpus),2)) + "%"
+
+
+    # Print Node Data
+    if state in ["DOWN","DRAIN"]:
+        print(DOWNCOLOR+"State: %s -- %s"%(state,reason)+ENDCOLOR)
+    else:
+        print("State: %s"%state)
+    print("Node Type: %s"%node_type)
+    print("Number of jobs running: %s"%n)
+    print("CPUs Available: %s | CPUs Used: %s | Percent Utilized: %s"%(total_cpus,used_cpus,percentage_usage))
+    if node_type == "GPU":
+        print("GPUs Available: %s | GPUs Used: %s | Percent Utilized: %s"%(total_gpus,used_gpus,gpu_percentage_usage))
+    print()
+    if node_type =="GPU":
+        format_string = "{0:"+str(len(node))+"} {1:"+str(total_cpus+3)+"} {2:"+str(total_gpus+3)+"}"
+        print(format_string.format("Node","CPU Usage","GPU Usage"))
+        print("%s:%s  %s"%(node,cpu_usage_bar,gpu_usage_bar))
+    else:
+        format_string = "{0:"+str(len(node))+"} {1:"+str(total_cpus+3)+"}"
+        print(format_string.format("Node","CPU Usage"))
+        print("%s:%s"%(node,cpu_usage_bar))
+    print("\nJobs")
+    print("="*len(message))
+    if node_type == "GPU":
+        job_formatting_string = "{0:10} {1:8} {2:10} {3:4} {4:4} {5:8} {6:15}"
+        print(job_formatting_string.format("Color","Job ID","Partition","CPUs","GPUs","Restarts","End Date/Time"))
+    else:
+        job_formatting_string = "{0:10} {1:8} {2:10} {3:4} {4:8} {5:15}"
+        print(job_formatting_string.format("Color","Job ID","Partition","CPUs","Restarts","End Date/Time"))
+    try:
+        for job,data in node_specific_dictionary["JOBS"].items():
+            color = data["color"]
+            identifier = color + block + ENDCOLOR + 9*" "
+            end_time = data["EndTime"].replace("T","/")
+            if node_type == "GPU":
+                print(job_formatting_string.format(identifier, str(job), data["Partition"],str(data["CPUs"]),str(data["GPUs"]),data["Restarts"],end_time))
+            else:
+                print(job_formatting_string.format(identifier, str(job), data["Partition"],str(data["CPUs"]),data["Restarts"],end_time))
+    except KeyError:
+        print("None")
+
+
+'''
+------------------------------------------------------------------------------------------
+##########################################################################################
+                                    Program Executes Below                                
+##########################################################################################
+------------------------------------------------------------------------------------------
+'''
+
+if __name__ == '__main__':
+    print("\nnodes-busy: visualize live system resource usage.\nTrouble seeing the output? Try 'nodes-busy --ascii'\n")
+    job_options = args(sys.argv[1:])
+    partition,user,group,node,all_nodes,color_random,use_ascii = job_options
+    # Check if valid user
+    if user != None:
+        p = subprocess.Popen(['getent passwd '+user],stdout=subprocess.PIPE, shell=True)
+        out,err = p.communicate()
+        if out.decode('utf-8') == '':
+            print("\nOops! User not found. Check your options and try again.\n")
+            usage(1)
+    # Check if valid group
+    if group != None:
+        p = subprocess.Popen(['getent group '+group],stdout=subprocess.PIPE, shell=True)
+        out,err = p.communicate()
+        if out.decode('utf-8') == '':
+            print("\nOops! Group not found. Check your options and try again.\n")
+            usage(1)
+    # Check if valid partition. Still unsure about getting high priority. Can dig at some point
+    if partition != None and partition not in ["standard","windfall"]:
+        print("\nOops! Partition not recognized. Check your options and try again.\n")
+        usage(1)
+    # If user wants to get random colors (just for fun), a random seed is set
+    if color_random != False:
+        seed = random.randint(1,1000)
+    else:
+        seed =None
+    job_data = get_scontrol_job_data()
+    node_data = get_scontrol_node_data()
+    merged = merge(job_data, node_data)
+    del node_data, job_data
+    if node == None:
+        display(merged,job_options,seed)
+    else:
+        single_node_display(node,merged,seed)
+
