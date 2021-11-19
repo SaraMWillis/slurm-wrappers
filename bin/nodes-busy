@@ -20,7 +20,6 @@ def vis_options(seed=None):
     DOWNUSEDCOLOR=COLOR%int(181)
     ENDCOLOR="\033[0m"
     cycle = [COLOR%i for i in range(0,256)]
-    # Do you want to set the colors to be deterministic (True) or random each time (False)?
     if seed == None:
         random.seed(110)
     if seed != None:
@@ -35,7 +34,8 @@ def vis_options(seed=None):
 '''
 ------------------------------------------------------------------------------------------
                                      Job Options
-Options include --user=username, --partition=queue, --help, and --node=nodename, --ascii
+Options include --user, --group, --node, --help, --ascii, --randomize, --all. Option 
+details shown with "--help"
 '''
 def args(argv):
     partition=user=group=node=None
@@ -88,7 +88,7 @@ def usage(exit_value):
     print("\nValid VIS_OPTIONS                 : Optional. More than one can be selected")
     print("   --ascii                        : Use ascii encoding instead of utf-8. Can resolve formatting")
     print("                                  : issues (e.g. in OOD terminals)")
-    print("   --random                       : Just for fun, mix up the color display")
+    print("   --randomize                    : Just for fun, mix up the color display")
     print("   --all                          : Include all system nodes in --user and --group output")
     sys.exit(exit_value)
 
