@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+
+# Author: Sara Willis
+
+import getopt, subprocess, sys, os, getpass
+from datetime import datetime, timedelta
+
+def args(argv):
+    help_message = "Usage: job-history [--help] [--friendly|--all] <jobid>\nFlags are mutually exclusive."
+    mode = "standard"
+    if len(argv) == 0:
+        print("JobID required. See 'job-history --help' for usage")
+        sys.exit(1)
+    else:
+        opts,args = getopt.getopt(argv,'haf',['help','friendly','all'])
+        if len(opts) > 1:
+            print("Detected multiple flags, only one required. See 'job-history --help' for usage.")
+            sys.exit(1)
+        for opt,arg in opts:
+            if opt in ("-h","--help"):
+                print(help_message)
+                sys.exit(0)
+            elif opt in ("-f","--friendly"):
+                mode = "friendly"
+            elif opt in ("-a","--all"):
+                mode = "all"
+        if len(args) > 1:
+            print("Multiple arguments detected. Please provide only one job ID. For help, see 'job-history --help'")
+            sys.exit(10)
+        jobid = args[0]
+        try:
+            int(jobid)
+        except ValueError:
+            print("Job ID must be an integer.")
+            sys.exit(1)
+    return jobid, mode
+
+
+
+def job_data(jobid):
+    try:
+        p = subprocess.Popen(["sacct","-X","-o","ALL", "-j", jobid,"-p"], stdout=subprocess.PIPE)
+    except FileNotFoundError:
+        print("Oops, something has gone wrong!\nMabe SLURM is not available on this cluster?\n")
+        sys.exit(1)
+    out,err = p.communicate()
+    header = True
+    for line in str(out).split('\\n'):
+        data = [i for i in line.split("|")]
+        if len(data) not in (1,2):
+            if header == True:
+                fields = [i.replace("b'",'') for i in data]
+                header = False
+            else:
+                entries = data
+    try:
+        output = dict(zip(fields,entries))
+    except UnboundLocalError:
+        print("Oops! Something has gone wrong. Is the Job ID you provided valid?")
+        sys.exit(1)
+    return output
+
+
+def friendly(job_data,length):
+    job_fields = {"User Information":{"Account":None,"Group":None,"User":None,"WorkDir":None,"Cluster":None},
+              "Queue Information":{"Submit":None,"Start":None,"End":None,"Suspended":None,"Reserved":"Time in Queue","Partition":None,"Reason":"Reasons if job delayed"},
+              "Job Information":{"JobID":None,"JobName":None,"State":None,"ExitCode":None},
+              "Job Resources": {"AllocCPUS":"CPUs Reserved","AllocGRES":"GPUs Allocated","AllocNodes":"Nodes Allocated","NTasks":"Tasks Allocated","NodeList":None,"ReqMem":"Memory","TimeLimit":None}}    
+    for i in job_fields:
+        print("\n"+i+"\n"+"="*length)
+        for j in job_fields[i]:
+            if j in job_data.keys():
+                if job_fields[i][j] != None:
+                    description = job_fields[i][j]
+                else:
+                    description = j
+                print("{0:25} : {1:100}".format(description,job_data[j]))
+
+def everything(job_data):
+    for entry in job_data.keys():
+        description = entry
+        details = job_data[entry]
+        print("{0:25} : {1:100}".format(description,details))
+
+def standard(job_data):
+    for entry in job_data.keys():
+        description = entry
+        details = job_data[entry]
+        if details != '' and details != "Unknown":
+            print("{0:25} : {1:100}".format(description,details))
+
+if __name__ == "__main__":
+    length = 50
+    jobid, mode = args(sys.argv[1:])
+    data = job_data(jobid)
+    if mode == 'friendly':
+        friendly(data,length)
+    elif mode == "all":
+        everything(data)
+    elif mode == "standard":
+        standard(data)
