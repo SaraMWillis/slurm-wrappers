@@ -47,7 +47,6 @@ def args(argv):
     except getopt.GetoptError:
         print("Unrecognized Option")
         usage(1)
-        #return partition, user, node
     for opt, arg in opts:
         if opt in ("-h","--help"):
             usage(0)
@@ -253,7 +252,8 @@ def get_scontrol_node_data():
                 # Reasons may include spaces and the node specs are space-delimited
                 # (sigh), so this gets the full reason through brute force
                 elif field == "Reason":
-                    reason = i.split("Reason=")[-1].split(" Comment=")[0] #.split("[root")[0]
+                    reason = i.split("Reason=")[-1].split(" Comment=")[0]
+                    # Get rid of comment initiator and just leave the reason for display
                     removal = re.search('\[[^\]]*\]',reason)
                     initiator = removal.group(0)
                     reason = reason.replace(initiator,"")
@@ -520,7 +520,6 @@ def display(node_specs,job_options,seed=None):
             percentage = " "*(6-len(percentage))+percentage
             state = node_specs[node]["State"]
             usage = usage_bar(block,CPUAlloc,highlighted,total_cpus,state,seed)
-            # Need to add section to catch ascii formatting. Right now assumes utf8
             if state not in ["DOWN","DRAIN"]:
                 formatting_string = format_string(False,False,max_cpus,DOWNCOLOR,ENDCOLOR)
                 print(formatting_string.format(node,usage,percentage))
@@ -600,7 +599,6 @@ def display(node_specs,job_options,seed=None):
             percentage = " "*(6-len(percentage))+percentage
             state = node_specs[node]["State"]
             usage = usage_bar(block,CPUAlloc,highlighted,total_cpus,state,seed)
-            # Need to add section to catch ascii formatting. Right now assumes utf8
             if state not in ["DOWN","DRAIN"]:
                 formatting_string = format_string(False,False,max_cpus,DOWNCOLOR,ENDCOLOR)
                 print(formatting_string.format(node,usage,percentage))
