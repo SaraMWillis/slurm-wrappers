@@ -158,7 +158,7 @@ cluster. Specs are pulled from these to determine the number of GPUs, CPUs, etc.
 Also pulls the job queue for the --partition option.
 '''
 def get_scontrol_job_data(target_job = None):
-    fields = ["JobId","Partition","Restarts","EndTime","TimeLimit","NodeList","NumNodes","NumCPUs","NumTasks","TRES","JOB_GRES","Nodes","Features","CPU_IDs"]
+    fields = ["JobId","Partition","Restarts","EndTime","TimeLimit","NodeList","NumNodes","NumCPUs","NumTasks","TRES","JOB_GRES","Nodes","Features","CPU_IDs","TresPerNode"]
     job_data = {}
     if target_job == None:
         p = subprocess.Popen(['scontrol show job -d --oneliner | grep "JobState=RUNNING"'],stdout=subprocess.PIPE, shell=True)
@@ -190,7 +190,13 @@ def get_scontrol_job_data(target_job = None):
                         else:
                             cpus_assigned += len(range(int(split_set[0]),int(split_set[1]))) + 1
                     job_data[JobId]["Individual Nodes"][current_node] = cpus_assigned
+                # Bit of a hack here. Earlier, I was using JOB_GRES to pull the GPU allocations
+                # for jobs. Problem: this is the total GPU count, so multi-node jobs reserving N
+                # nodes show up as allocating JOB_GRES*N GPUs. The TresPerNode should show
+                # GPUs per node, but this entry is restricted to only jobs with GPU allocations
                 elif job_entry[0] == "JOB_GRES":
+                    job_data[JobId]["GPUAlloc"] = 0
+                elif job_entry[0] == "TresPerNode":
                     gpu_opts = job_entry[1]
                     if gpu_opts == "(null)":
                         job_data[JobId]["GPUAlloc"] = 0
