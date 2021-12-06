@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+
+import datetime, subprocess, sys, re
+
+node_states = {}
+
+try:
+    p = subprocess.Popen(["scontrol","show","nodes","--all"], stdout=subprocess.PIPE)
+except FileNotFoundError:
+    print("Slurm not available on this cluster\n")
+    sys.exit(1)
+out,err = p.communicate()
+
+j = subprocess.Popen(["squeue | wc -l"], shell=True,stdout=subprocess.PIPE)
+j_out, j_err = j.communicate()
+
+print()
+today = datetime.datetime.now()
+print(today.strftime("%a %b %d, %I:%M:%S %p (MST) %G"))
+print()
+
+for line in str(out).split('\\n'):
+    data = [i for i in line.split(' ') if i != '']
+    if len(data) == 0:
+        pass
+    else:
+        if len(data) != 0:
+            if "NodeName" in data[0]:
+                NodeName=data[0].split("=")[1]
+                node_states[NodeName] = {}
+                     
+            else:
+                if "CPUAlloc" in data[0]:
+                    total_cpus = int(data[1].split("=")[-1])
+                    if total_cpus == "96":
+                        total_cpus = 94
+                    node_states[NodeName]["TotalCPUs"] = total_cpus
+                if "Gres" in data[0]:
+                    if "gpu" in data[0]:
+                        node_states[NodeName]["GPU"] = True
+                    else:
+                        node_states[NodeName]["GPU"] = False
+                if "AllocTRES" in data[0]:
+                    if "cpu" not in data[0]:
+                        node_states[NodeName]["CPUsInUse"]=0
+                    else: 
+                        cpus_in_use = int(data[0].split("cpu")[-1].replace("=","").split(',')[0])
+                        node_states[NodeName]["CPUsInUse"]=cpus_in_use
+                if "AvailableFeatures" in data[0]: 
+                    if data[0].split("=")[-1] == "hi_mem":
+                        node_states[NodeName]["HighMem"] = True
+                    else:
+                        node_states[NodeName]["HighMem"] = False
+        
+idle_nodes=[i for i in node_states if node_states[i]["CPUsInUse"]==0]
+gpu_nodes=[i for i in node_states if node_states[i]["GPU"] == True]
+high_mem_nodes = [i for i in node_states if node_states[i]["HighMem"] == True]
+standard_nodes = [i for i in node_states if node_states[i]["HighMem"] == False and node_states[i]["GPU"] ==False]
+
+total_jobs = int(re.search(r'\d+',str(j_out)).group())
+print("Total Number of Nodes      : {0:10}".format(len(node_states)))
+print("Total Number of Idle Nodes : {0:10}".format(len(idle_nodes)))
+print()
+print("Total Number of Jobs       : {0:10}".format(total_jobs))
+print()
+
+total_cpus_in_use=sum([node_states[i]["CPUsInUse"] for i in node_states])
+total_cores=sum([node_states[i]["TotalCPUs"] for i in node_states])
+if total_cores == 0:
+    percent_util = "N/A"
+else:
+    percent_util=str(round(100*(total_cpus_in_use/total_cores),2))+"%"
+print("Total Number of CPUs       : {0:10}".format(total_cores))
+print("CPUs in Use                : {0:10}".format(total_cpus_in_use))
+print("Percent Utilization        : {0:>10}".format(percent_util))
+print()
+
+# Standard Nodes
+num_standard = len(standard_nodes)
+total_std_cores = sum([node_states[i]["TotalCPUs"] for i in standard_nodes])
+total_std_cpu_use = sum([node_states[i]["CPUsInUse"] for i in standard_nodes])
+if total_std_cores == 0:
+    percent_util_std = "N/A"
+else:
+    percent_util_std = str(round(100*(total_std_cpu_use/total_std_cores),2))+"%"
+print("Standard Nodes")
+print("=================")
+print("Total Standard Nodes       : {0:10}".format(num_standard))
+print("Total Standard CPUs        : {0:10}".format(total_std_cores))
+print("Standard CPUs In Use       : {0:10}".format(total_std_cpu_use))
+print("Percent Utilization        : {0:>10}".format(percent_util_std))
+print()
+
+# GPU Nodes
+num_gpu = len(gpu_nodes)
+total_gpu_cores = sum([node_states[i]["TotalCPUs"] for i in gpu_nodes])
+total_gpu_cpu_use = sum([node_states[i]["CPUsInUse"] for i in gpu_nodes])
+if total_gpu_cores ==0:
+    percent_util_gpu = "N/A"
+else:
+    percent_util_gpu = str(round(100*(total_gpu_cpu_use/total_gpu_cores),2))+"%"
+print("GPU Nodes")
+print("=================")
+print("Total GPU Nodes            : {0:10}".format(num_gpu))
+print("Total GPU CPUs             : {0:10}".format(total_gpu_cores))
+print("GPU CPUs In Use            : {0:10}".format(total_gpu_cpu_use))
+print("Percent Utilization        : {0:>10}".format(percent_util_gpu))
+print()
+
+# High Memory Nodes
+num_high_mem= sum([node_states[i]["TotalCPUs"] for i in high_mem_nodes])
+total_high_mem_cpu_use = sum([node_states[i]["CPUsInUse"] for i in high_mem_nodes])
+if num_high_mem == 0:
+    percent_util_hi = "N/A"
+else:
+    percent_util_hi = str(round(100*(total_high_mem_cpu_use/num_high_mem),2))+"%"
+print("High Memory Nodes")
+print("=================")
+print("Total High Mem Nodes       : {0:10}".format(len(high_mem_nodes)))
+print("Total High Mem CPUs        : {0:10}".format(num_high_mem))
+print("High Mem CPUs In Use       : {0:10}".format(total_high_mem_cpu_use))
+print("Percent Utilization        : {0:>10}".format(percent_util_hi))
+
+# List of Idle Nodes
+print()
+print("Idle Nodes:")
+print("=================")
+print(",".join(idle_nodes))
