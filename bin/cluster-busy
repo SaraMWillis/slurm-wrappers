@@ -1,0 +1,462 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+'''
+Author : Sara Willis
+Date   : November 29, 2021
+'''
+
+import subprocess, sys, os, random, datetime, getopt, math, re, time
+
+
+'''
+------------------------------------------------------------------------------------------
+                                       Vis Options
+Define the vis options for output display
+'''
+
+class vis():
+    # Formatting for usage meters
+    utf8_block     = u'\u2588'
+    utf8_space     = u'\u2591'
+    ascii_block    = '#'
+    ascii_space    = '-'
+    
+    major_heading = "="
+    minor_heading = "_"
+    # Color/text formatting options
+    COLOR         = '\033[38;5;%dm'
+    ENDCOLOR      = '\033[0m'
+    BOLD          = '\033[1m'
+    USAGECOLOR = "\033[0;31m"
+    light_usage = 10
+    medium_usage = 11
+    heavy_usage = 166
+
+    # Formatting for display width
+    width         = 100
+
+
+'''
+------------------------------------------------------------------------------------------
+                                     Job Options
+Options include --ascii, --partition=windfall|standard|high_priority, --help
+'''
+def args(argv):
+    partition=None
+    use_ascii=False
+    try:
+        opts,args = getopt.getopt(argv, "hap:",["help","ascii","partition="])
+        if len(opts) == 0:
+            return partition,use_ascii
+    except getopt.GetoptError:
+        print("Unrecognized Option")
+        usage(1)
+    for opt,arg in opts:
+        if opt in ("-h","--help"):
+            usage(0)
+        elif opt in ("-p","--partition"):
+            partition=arg.lower()
+        elif opt in ("-a","--ascii"):
+            use_ascii=True
+        else:
+            print("Unrecognized Option")
+            usage(1)
+    return partition,use_ascii
+
+
+
+
+def usage(exit_code):
+    print("Usage: cluster-busy [--partition=windfall|standard|high_priority] [--ascii]")
+    sys.exit(exit_code)
+
+
+
+    
+'''
+------------------------------------------------------------------------------------------
+                                  Splitting Node Names
+Slurm tries to make for nice output by representing nodes in formats like:
+cpu1,cpu31,cpu[45-46,48,51-55],cpu[57-58],cpu[59-60,63],cpu[70,74]...
+which is a bummer to parse. This function is dedicated to untangling this
+'''
+def split_node_format(node,cpus):
+    split_nodes = []
+    nodes = node.split(",")
+    clustered = False
+    for item in nodes:
+       if "-" not in item:
+           if clustered == False:
+               if "[" not in item:
+                   split_nodes.append((item,cpus))
+               else:
+                   clustered = True
+                   split_node = item.split("[")
+                   prefix = split_node[0]
+                   if "]" in split_node[1]:
+                       clustered = False
+                   reformatted_node = prefix + split_node[1].replace("]","")
+                   split_nodes.append((reformatted_node,cpus))
+           else:
+               if "]" in item:
+                   clustered = False
+               reformatted_node = prefix + item.replace("]","")
+               split_nodes.append((reformatted_node,cpus))
+       else:
+           if "[" in item:
+               clustered = True
+               split_item = item.split("[")
+               prefix = split_item[0]
+               indices = split_item[1]
+               if "]" in indices:
+                   clustered= False
+               split_indices = indices.replace("]","").split("-")
+               indices_range = range(int(split_indices[0]),int(split_indices[1])+1)
+               for i in indices_range:
+                   reformatted_node = prefix + str(i)
+                   split_nodes.append((reformatted_node,cpus))
+           else:
+               indices = item
+               if "]" in indices:
+                   clustered = False
+               split_indices = indices.replace("]","").split("-")
+               indices_range = range(int(split_indices[0]),int(split_indices[1])+1)
+               for i in indices_range:
+                   reformatted_node = prefix + str(i)
+                   split_nodes.append((reformatted_node,cpus))
+    return split_nodes
+
+'''
+------------------------------------------------------------------------------------------
+                                 Pull Job Data
+Uses "scontrol show job -d --oneliner" to grab detailed data on every job running on the 
+cluster. Specs are pulled from these to determine the number of GPUs, CPUs, etc. reserved. 
+Also pulls the job queue for the --partition option.
+ 
+I was hoping to avoid this particular subroutine in this script since I didn't want to 
+make too many slurm calls, but apparently "scontrol show nodes --all" doesn't give
+100% accurate GPU usage. In some cases, I found four GPUs were reserved on Puma, but 
+scontrol was only reporting 3. This, combined with scontrol, gets the more accurate
+usage information
+'''
+def get_scontrol_job_data(target_job = None):
+    # I only care about some of the fields
+    fields = ["JobId","Partition","Restarts","EndTime","TimeLimit","NodeList","NumNodes","NumCPUs","NumTasks","TRES","JOB_GRES","Nodes","Features","CPU_IDs","TresPerNode"]
+    job_data = {}
+    if target_job == None:
+        p = subprocess.Popen(['scontrol show job -d --oneliner | grep "JobState=RUNNING"'],stdout=subprocess.PIPE, shell=True)
+    else:
+        p = subprocess.Popen(['scontrol show job -d --oneliner '+target_job+' | grep "JobState=RUNNING"'],stdout=subprocess.PIPE,stderr=subprocess.PIPE, shell=True)
+    out,err = p.communicate()
+    if err != None and err.decode("utf-8") != "":
+        print("Oops, something has gone wrong!\nIf you've included a Job ID, check that it's valid and try again.")
+        sys.exit(1)
+    output = out.decode('utf-8').split("\n")
+    for job in output:
+        details = job.split(' ')
+        for i in details:
+            job_entry = i.split("=")
+            if job_entry[0] in fields:
+                if job_entry[0] == "JobId":
+                    JobId = job_entry[1]
+                    job_data[JobId] = {"Individual Nodes" : {}}
+                elif job_entry[0] =="Nodes":
+                    current_node = job_entry[1]
+                    job_data[JobId]["Individual Nodes"][current_node] = None
+                elif job_entry[0] == "CPU_IDs":
+                    cpus_assigned = 0
+                    ids = job_entry[1].split(',')
+                    for ID_set in ids:
+                        split_set = ID_set.split("-")
+                        if len(split_set) == 1:
+                            cpus_assigned +=1
+                        else:
+                            cpus_assigned += len(range(int(split_set[0]),int(split_set[1]))) + 1
+                    job_data[JobId]["Individual Nodes"][current_node] = cpus_assigned
+                # Bit of a hack here. Earlier, I was using JOB_GRES to pull the GPU allocations
+                # for jobs. Problem: this is the total GPU count, so multi-node jobs reserving N
+                # nodes show up as allocating JOB_GRES*N GPUs. The TresPerNode should show
+                # GPUs per node, but this entry is restricted to only jobs with GPU allocations
+                elif job_entry[0] == "JOB_GRES":
+                    job_data[JobId]["GPUAlloc"] = 0
+                elif job_entry[0] == "TresPerNode":   
+                    gpu_opts = job_entry[1]
+                    if gpu_opts == "(null)":
+                        job_data[JobId]["GPUAlloc"] = 0
+                    elif gpu_opts == "gpu":
+                        job_data[JobId]["GPUAlloc"] = 1
+                    else:
+                        job_data[JobId]["GPUAlloc"] = gpu_opts.split(":")[-1]
+
+                else:
+                    entry_label = job_entry[0]
+                    entry_data = job_entry[1]
+                    job_data[JobId][entry_label] = entry_data
+        # Catch all instances of node name reformatting so the jobs can be
+        # matched 
+        remove, add = [],[]
+        for entry,cpus in job_data[JobId]["Individual Nodes"].items():
+            if "," in entry or "[" in entry:
+                remove.append(entry)
+                nodes = split_node_format(entry,cpus)
+                add += nodes
+        for entry in remove:
+            job_data[JobId]["Individual Nodes"].pop(entry)
+        for entry in add:
+            job_data[JobId]["Individual Nodes"][entry[0]] = entry[1]
+    return job_data
+
+'''
+------------------------------------------------------------------------------------------
+                                  Get Node Data
+Get all data from nodes and arrange into dictionary. This can be merged with the job data 
+to get comprehensive information about system use.
+'''
+def get_scontrol_node_data():
+    node_data = {"REASONS":{}}
+    n = 1
+    fields = ["NodeName","CPUAlloc","CPUTot","AvailableFeatures","ActiveFeatures","AllocTRES","AllocTRES","CfgTRES","State","Reason"]
+    p = subprocess.Popen(['scontrol show nodes --all --oneliner'],stdout=subprocess.PIPE,shell=True)
+    out,err = p.communicate()
+    node_output = out.decode('utf-8').split("\n")
+    for i in node_output:
+        node_specs = i.split(" ")
+        for j in node_specs:
+            field = j.split("=")[0]
+            if field in fields:
+                if field == "NodeName":
+                    Node_Name = j.split("=")[-1]
+                    node_data[Node_Name]={"Node_Type":"Standard"}
+                elif field == "AllocTRES" or field == "CfgTRES":
+                    if "gpu" in j:
+                        node_data[Node_Name]["Node_Type"] = "GPU"
+                        gpu_count = j.split("gpu")[-1].split("=")[-1]
+                        node_data[Node_Name][field] = gpu_count
+                elif field == "AvailableFeatures":
+                    available_features = j.split("=")[-1]
+                    if available_features == "hi_mem":
+                        node_data[Node_Name]["Node_Type"] = "HiMem"
+                # Reasons may include spaces and the node specs are space-delimited
+                # (sigh), so this gets the full reason through brute force
+                elif field == "Reason":
+                    reason = i.split("Reason=")[-1].split(" Comment=")[0] #.split("[root")[0]
+                    removal = re.search('\[[^\]]*\]',reason)
+                    initiator = removal.group(0)
+                    reason = reason.replace(initiator,"")
+                    if reason not in node_data["REASONS"]:
+                        node_data["REASONS"][reason]=n
+                        node_data[Node_Name]["Reason"] =n
+                        n+=1
+                    else:
+                        node_data[Node_Name]["Reason"] =node_data["REASONS"][reason]
+                elif field == "State":
+                    state = j.split("=")[-1]
+                    if "DOWN" in state:
+                        node_data[Node_Name]["State"] = "DOWN"
+                    elif "DRAIN" in state:
+                        node_data[Node_Name]["State"] = "DRAIN"
+                    else:
+                        node_data[Node_Name]["State"]="UP"
+                else:
+                    node_data[Node_Name][field] = j.split("=")[-1]
+    return node_data
+
+'''
+------------------------------------------------------------------------------------------
+                                          Merge
+Merge the jobs and nodes dictionary together to get comprehensive data on system use. 
+'''
+def merge(jobs_dictionary, nodes_dictionary):
+    for job in jobs_dictionary.keys():
+        for node,cpus in jobs_dictionary[job]["Individual Nodes"].items():
+            if "JOBS" not in nodes_dictionary[node].keys():
+                nodes_dictionary[node]["JOBS"] = {}
+            nodes_dictionary[node]["JOBS"][job] = {"CPUs":cpus, "GPUs":jobs_dictionary[job]["GPUAlloc"],"EndTime":jobs_dictionary[job]["EndTime"],"Partition":jobs_dictionary[job]["Partition"],"Restarts":jobs_dictionary[job]["Restarts"]}
+    return nodes_dictionary
+
+
+
+def cluster_summary(cluster_data,partition):
+    node_types = {"Standard":{"CPU Tot":0,"CPU Used":0,"Total":0,"Partition_CPU":0},"GPU":{"CPU Tot":0,"CPU Used":0,"GPU Tot":0,"GPU Used":0,"Total":0,"Partition_CPU":0,"Partition_GPU":0},"HiMem":{"CPU Tot":0,"CPU Used":0,"Total":0,"Partition_CPU":0}}
+    for node,value in cluster_data.items():
+        if node != "REASONS":
+            ntype = value["Node_Type"]
+            node_types[ntype]["Total"]+=1
+            node_types[ntype]["CPU Tot"] += int(value["CPUTot"])
+            node_types[ntype]["CPU Used"] += int(value["CPUAlloc"])
+            if partition != None and "JOBS" in value.keys():
+                for job in value["JOBS"].values():
+                    if job["Partition"] == partition:
+                        partition_cpus = int(job["CPUs"])
+                        node_types[ntype]["Partition_CPU"] += partition_cpus
+            if ntype == "GPU":
+                avail_gpu = int(value["CfgTRES"])
+                try:
+                    used_gpu = sum([int(i["GPUs"]) for i in value["JOBS"].values()])
+                    if partition != None:
+                        partition_gpus = sum([int(i["GPUs"]) for i in value["JOBS"].values() if i["Partition"] == partition])
+                    else:
+                        partition_gpus = 0
+                except KeyError:
+                    used_gpu =0
+                    partition_gpus = 0
+                node_types[ntype]["GPU Tot"] += avail_gpu
+                node_types[ntype]["GPU Used"] += used_gpu
+                node_types[ntype]["Partition_GPU"] += partition_gpus
+    return node_types
+
+def usage_color(percentage):
+    if percentage < 50:
+        FORMATCOLOR = COLOR%vis.light_usage
+    elif percentage <= 90 and percentage >= 50:
+        FORMATCOLOR = COLOR%vis.medium_usage
+    else:
+        FORMATCOLOR = COLOR%vis.heavy_usage
+    return FORMATCOLOR
+
+
+def usage_bar(use_block,space_block,usage,length=100,highlight_usage=0):
+    USAGECOLOR=vis.USAGECOLOR
+    ENDCOLOR = vis.ENDCOLOR
+    nblocks = round(usage * length)
+    nspaces = length - nblocks
+    highlighted_blocks = math.ceil((nblocks*highlight_usage))
+    unhighlighted_blocks = math.floor((nblocks * (1-highlight_usage)))
+    bar = "[" + use_block*unhighlighted_blocks + USAGECOLOR+use_block*highlighted_blocks+ENDCOLOR + space_block * nspaces +"]"
+    return bar
+
+
+'''
+------------------------------------------------------------------------------------------
+##########################################################################################
+                                    Program Executes Below                                
+##########################################################################################
+------------------------------------------------------------------------------------------
+'''
+
+if __name__ == "__main__":
+    # Pull vis options
+    block = vis.utf8_block
+    space = vis.utf8_space
+    width = vis.width
+    BOLD = vis.BOLD
+    COLOR = vis.COLOR
+    ENDCOLOR = vis.ENDCOLOR
+    
+    partition,use_ascii = args(sys.argv[1:])
+    if partition != None and partition not in ("windfall","standard","high_priority"):
+        print("Invalid partition. Options include: standard, windfall, and high_priority")
+        usage(1)
+    if use_ascii == True:
+        block = vis.ascii_block
+        space = vis.ascii_space
+    # Catch if user has issues with utf-8 encoding. If so, switch to ascii
+    try:
+        heading_text = block + " UArizona HPC Cluster Usage " + block
+        print("\n"+BOLD+heading_text.center(width)+ENDCOLOR+"\n")
+        if partition != None:
+            legend = "Highlighting resources reserved by the %s partition with: "%partition + vis.USAGECOLOR + block + ENDCOLOR
+            print(legend.center(width))
+    except UnicodeEncodeError:
+        block = vis.ascii_block
+        space = vis.ascii_space
+        heading_text = block + " UArizona HPC Cluster Usage " + block
+        print("\n"+BOLD+heading_text.center(width)+ENDCOLOR+"\n")
+        if partition != None:
+            legend = "Highlighting resources reserved by the %s partition with: "%partition + vis.USAGECOLOR + block + ENDCOLOR
+            print(legend.center(width))
+    # Each cluster has a configuration file. Match cluster name and file location
+    clusters = [("Puma","slurm"),("Ocelote","slurm-ocelote"),("ElGato","slurm-elgato")]
+    #clusters = [("Puma","slurm")]
+    for cluster in clusters:
+        cluster_name = cluster[0]
+        cluster_name = cluster_name.center(width)
+        print("\n\n"+vis.major_heading*width + "\n"+BOLD+cluster_name+ENDCOLOR+"\n"+vis.major_heading*width+"\n\n")
+        print("Resources".center(width))
+        print(vis.minor_heading*width)
+        os.environ["SLURM_CONF"] ="/etc/%s/slurm.conf"%cluster[1]
+
+        # Parse output to get accurate cluster usage info
+        node_data = get_scontrol_node_data()
+        job_data = get_scontrol_job_data()
+        cluster_data = merge(job_data, node_data)
+        del node_data, job_data
+        node_types = cluster_summary(cluster_data,partition)
+        
+        # Used to grab the percentages for each node type. This will be used to 
+        # generate visualizations of cluster usage
+        percentages = {}
+ 
+        # Print text grid of cluster usage summary       
+        format_string = "{0:20} | {1:<10} | {2:<10} | {3:<9} | {4:<6} | {5:<10} | {6:<9} | {7:<6}"
+        print(format_string.format("Node Type","Node Count", "CPUs Total", "CPUs Used","% Used","GPUs Total","GPUs Used","% Used"))
+        print(vis.minor_heading*width)
+        for ntype,value in node_types.items():
+            total = value["Total"]
+            cpu_used = value["CPU Used"]
+            cpu_avail = value["CPU Tot"]
+            cpu_partition = value["Partition_CPU"]
+            if cpu_avail != 0:
+                cpu_percent = round(cpu_used/cpu_avail,2)*100
+                if cpu_used != 0:
+                    cpu_partition_percent = (cpu_partition/cpu_used)*100
+                else:
+                    cpu_partition_percent = 0
+                cpu_percent_print_friendly = "%.2f"%cpu_percent
+            else:
+                cpu_percent = 0
+                cpu_partition_percent = 0
+            if ntype == "GPU":
+                gpu_used = value["GPU Used"]
+                gpu_avail = value["GPU Tot"]
+                gpu_partition = value["Partition_GPU"]
+                gpu_percent = round(gpu_used/gpu_avail,2)*100
+                if gpu_used != 0:
+                    gpu_partition_percent = (gpu_partition/gpu_used)*100
+                else:
+                    gpu_partition_percent = 0
+                gpu_percent_print_friendly = "%.2f"%gpu_percent
+            else:
+                gpu_used = "N/A"
+                gpu_avail = "N/A"
+                gpu_percent = "N/A"
+                gpu_partition="N/A"
+                gpu_partition_percent="N/A"
+                gpu_percent_print_friendly = "N/A"
+            if cpu_avail != 0:
+                print(format_string.format(ntype,total,cpu_avail,cpu_used,cpu_percent_print_friendly+"%",gpu_avail,gpu_used,gpu_percent_print_friendly+"%"))
+                percentages[ntype] = {"CPU_PERCENT":cpu_percent,"CPU_PARTITION":cpu_partition_percent}
+            if gpu_percent != "N/A":
+                percentages["GPUs"] = {"GPU_PERCENT":gpu_percent,"GPU_PARTITION":gpu_partition_percent}
+        print("\n"+BOLD + "CPU Usage".center(width) +ENDCOLOR+"\n"+vis.minor_heading*width)
+
+        # Print CPU usage vis            
+        cpu_types = ["Standard","GPU","HiMem"]
+        for ctype in cpu_types:
+            try:
+                percentage = percentages[ctype]["CPU_PERCENT"]
+                highlight_val = percentages[ctype]["CPU_PARTITION"]/100
+                FORMATCOLOR = usage_color(percentage)
+                bar_width = width-20
+                bar = usage_bar(block,space,percentage/100,bar_width,highlight_val)
+                bar_formatting = "{0:8}:  {1:"+str(bar_width+2)+"} ({2:5})"
+                print_friendly_percent = "%.1f"%percentage + "%"
+                print(bar_formatting.format(ctype,bar,print_friendly_percent))
+            except KeyError:
+                pass
+
+        # print GPU usage vis
+        print("\n"+BOLD + "GPU Usage".center(width)+ENDCOLOR +"\n"+vis.minor_heading*width)
+        try:
+            percentage = percentages["GPUs"]["GPU_PERCENT"]
+            highlight_val = percentages["GPUs"]["GPU_PARTITION"]/100
+            FORMATCOLOR = usage_color(percentage)
+            bar_width = width-20
+            bar = usage_bar(block,space,percentage/100,bar_width,highlight_val)
+            bar_formatting = "{0:8}:  {1:"+str(bar_width+2)+"} ({2:5})"
+            print_friendly_percent = "%.1f"%percentage + "%"
+            print(bar_formatting.format("GPUs",bar,print_friendly_percent))
+        except:
+            pass
+print("\n\n")
