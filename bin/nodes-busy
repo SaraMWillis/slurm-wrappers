@@ -4,38 +4,85 @@
 '''
 Author : Sara Willis
 Date   : October 18, 2021
+Update : Dec 1, added high-priority queue and fixed GPU overcounting
+
+This script is designed to print a visualization of a SLURM cluster's resource usage.
+
 '''
 
 import subprocess, sys, os, random, datetime, getopt, math, re
 
+
+'''
+------------------------------------------------------------------------------------------
+##########################################################################################
+                                    User Options                                
+##########################################################################################
+------------------------------------------------------------------------------------------
+
+
+                                    User Specifications
+Different clusters have different configurations for tracking resources, specifying  node 
+types, and have different partition names. 
+
+                                         features
+                                    Under Development
+features allows for adding in special nodes. Format should be a dictionary of the form:
+   {"Display Name 1": {Field Name: "Scontrol Field", "Field Value": "Scontrol Entry}, ...}
+Display Name will be printed in the output, The value for Field Name is the entry listed
+in "scontrol show nodes --all", e.g. "AvailableFeatures", and Field Value is the value 
+associated with that entry
+'''
+
+
+class UserSpecifications:
+    partitions = ["standard","windfall","high_priority"]
+    #features = {"HiMem":{"Field Name": "AvailableFeatures","Field Value": "hi_mem"}}
+
+
 '''
 ------------------------------------------------------------------------------------------
                                    Vis Options
-Options for colors and usage symbols. Cycle is used to give a set of 256 colors for the
---nodes option. This allows for color coding the different jobs running on a compute node
+
 '''
-def vis_options(seed=None):
+class VisOptions:
+    def __init__(self,seed):
+        self.seed = seed
+
+    # The different color options are for highlighting resources being used by a 
+    # group/user/partition, if requested. Additionally, nodes in the DOWN/DRAIN
+    # state will be highlighted with the DOWNCOLOR.
     COLOR="\033[38;5;%dm"
     DOWNCOLOR="\033[0;31m"
     DOWNUSEDCOLOR=COLOR%int(181)
     ENDCOLOR="\033[0m"
-    cycle = [COLOR%i for i in range(0,256)]
-    if seed == None:
-        random.seed(110)
-    if seed != None:
-        random.seed(seed)
-    random.shuffle(cycle)
+
+    # Blocks used to display resource usage. Want to use a different utf-8 character?
+    # https://www.w3schools.com/charsets/ref_utf_geometric.asp
     utf8_char = u'\u258B'
     ascii_char = '#'
-    return ENDCOLOR,DOWNCOLOR, cycle, utf8_char, ascii_char,DOWNUSEDCOLOR
-
-
-
+    
+    # A range of randomized colors is also generated for color-coding different jobs
+    # if the "--node=nodename" option is given. This is generally deterministic, 
+    # unless the --randomize flag is used. 
+    def color_cycle(self):
+        cycle = [self.COLOR%i for i in range(0,256)]
+        if self.seed == None:
+            random.seed(110)
+        if self.seed != None:
+            random.seed(seed)
+        random.shuffle(cycle)
+        return cycle
 '''
 ------------------------------------------------------------------------------------------
+##########################################################################################
+                                    Subroutines                                
+##########################################################################################
+------------------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------------------
                                      Job Options
-Options include --user, --group, --node, --help, --ascii, --randomize, --all. Option 
-details shown with "--help"
+Options include --user=username, --partition=queue, --help, and --node=nodename, --ascii
 '''
 def args(argv):
     partition=user=group=node=None
@@ -47,6 +94,7 @@ def args(argv):
     except getopt.GetoptError:
         print("Unrecognized Option")
         usage(1)
+        #return partition, user, node
     for opt, arg in opts:
         if opt in ("-h","--help"):
             usage(0)
@@ -80,15 +128,16 @@ Only used to print the usage message. Exits with provided value after print
 '''
 def usage(exit_value):
     print("Usage: nodes-busy [--OPTION=VALUE|--VIS_OPTIONS|--help]")
-    print("\nValid OPTION/VALUE combinations   : Only one OPTION/VALUE can be specified")
-    print("   --partiton=standard|windfall   : Highlights all CPUs/GPUs reserved by specified partition")
-    print("   --user=netid                   : Highlights all CPUs/GPUs reserved by <netid>'s jobs")
-    print("   --group=gid                    : Highlights all CPUs/GPUs reserved by <gid>'s jobs")
-    print("\nValid VIS_OPTIONS                 : Optional. More than one can be selected")
-    print("   --ascii                        : Use ascii encoding instead of utf-8. Can resolve formatting")
-    print("                                  : issues (e.g. in OOD terminals)")
-    print("   --randomize                    : Just for fun, mix up the color display")
-    print("   --all                          : Include all system nodes in --user and --group output")
+    print("\nValid OPTION/VALUE combinations : Only one OPTION/VALUE can be specified")
+    print("  --partiton=<partition*>       : Highlights all CPUs/GPUs reserved by specified partition")
+    print("  --user=netid                  : Highlights all CPUs/GPUs reserved by <netid>'s jobs")
+    print("  --group=gid                   : Highlights all CPUs/GPUs reserved by <gid>'s jobs")
+    print("\nValid VIS_OPTIONS               : Optional. More than one can be selected")
+    print("  --ascii                       : Use ascii encoding instead of utf-8. Can resolve formatting")
+    print("                                : issues (e.g. in OOD terminals)")
+    print("  --random                      : Just for fun, mix up the color display")
+    print("  --all                         : Include all system nodes in --user and --group output")
+    print("\n*Valid partitions: "+",".join(UserSpecifications.partitions)+"\n")
     sys.exit(exit_value)
 
 
@@ -159,24 +208,31 @@ Also pulls the job queue for the --partition option.
 '''
 def get_scontrol_job_data(target_job = None):
     fields = ["JobId","Partition","Restarts","EndTime","TimeLimit","NodeList","NumNodes","NumCPUs","NumTasks","TRES","JOB_GRES","Nodes","Features","CPU_IDs","TresPerNode"]
+
     job_data = {}
     if target_job == None:
         p = subprocess.Popen(['scontrol show job -d --oneliner | grep "JobState=RUNNING"'],stdout=subprocess.PIPE, shell=True)
     else:
         p = subprocess.Popen(['scontrol show job -d --oneliner '+target_job+' | grep "JobState=RUNNING"'],stdout=subprocess.PIPE,stderr=subprocess.PIPE, shell=True)
     out,err = p.communicate()
+
     if err != None and err.decode("utf-8") != "":
         print("Oops, something has gone wrong!\nIf you've included a Job ID, check that it's valid and try again.")
         sys.exit(1)
+    
+    # Split up space-delimited output into a job dictionary 
     output = out.decode('utf-8').split("\n")
     for job in output:
         details = job.split(' ')
         for i in details:
+            # Fields and their values are separated by "="
             job_entry = i.split("=")
+
+            # We only care about the fields we've defined, so we ignore the rest
             if job_entry[0] in fields:
                 if job_entry[0] == "JobId":
                     JobId = job_entry[1]
-                    job_data[JobId] = {"Individual Nodes" : {}}
+                    job_data[JobId] = {"Individual Nodes" : {},"GPUAlloc":0}
                 elif job_entry[0] =="Nodes":
                     current_node = job_entry[1]
                     job_data[JobId]["Individual Nodes"][current_node] = None
@@ -190,12 +246,7 @@ def get_scontrol_job_data(target_job = None):
                         else:
                             cpus_assigned += len(range(int(split_set[0]),int(split_set[1]))) + 1
                     job_data[JobId]["Individual Nodes"][current_node] = cpus_assigned
-                # Bit of a hack here. Earlier, I was using JOB_GRES to pull the GPU allocations
-                # for jobs. Problem: this is the total GPU count, so multi-node jobs reserving N
-                # nodes show up as allocating JOB_GRES*N GPUs. The TresPerNode should show
-                # GPUs per node, but this entry is restricted to only jobs with GPU allocations
-                elif job_entry[0] == "JOB_GRES":
-                    job_data[JobId]["GPUAlloc"] = 0
+
                 elif job_entry[0] == "TresPerNode":
                     gpu_opts = job_entry[1]
                     if gpu_opts == "(null)":
@@ -234,7 +285,7 @@ to get comprehensive information about system use.
 def get_scontrol_node_data():
     node_data = {"REASONS":{}}
     n = 1
-    fields = ["NodeName","CPUAlloc","CPUTot","AvailableFeatures","ActiveFeatures","AllocTRES","AllocTRES","CfgTRES","State","Reason"]
+    fields = ["NodeName","CPUAlloc","CPUTot","AvailableFeatures","AllocTRES","CfgTRES","State","Reason"]
     p = subprocess.Popen(['scontrol show nodes --all --oneliner'],stdout=subprocess.PIPE,shell=True)
     out,err = p.communicate()
     node_output = out.decode('utf-8').split("\n")
@@ -258,8 +309,7 @@ def get_scontrol_node_data():
                 # Reasons may include spaces and the node specs are space-delimited
                 # (sigh), so this gets the full reason through brute force
                 elif field == "Reason":
-                    reason = i.split("Reason=")[-1].split(" Comment=")[0]
-                    # Get rid of comment initiator and just leave the reason for display
+                    reason = i.split("Reason=")[-1].split(" Comment=")[0] #.split("[root")[0]
                     removal = re.search('\[[^\]]*\]',reason)
                     initiator = removal.group(0)
                     reason = reason.replace(initiator,"")
@@ -339,21 +389,20 @@ def merge(jobs_dictionary, nodes_dictionary):
                                          Usage Bar
 Create a usage bar for each node, highlighting any CPUs or GPUs based on user options
 '''
-def usage_bar(usage_block,num_used,num_highlighted,total_cpus,state,seed):
-    ENDCOLOR,DOWNCOLOR, cycle, utf8_char, ascii_char, DOWNUSEDCOLOR = vis_options(seed)
-    highlight_color = cycle[0]
+def usage_bar(usage_block,num_used,num_highlighted,total_cpus,state,vis):
     if state in ["DOWN","DRAIN"]:
-        highlight_color=DOWNUSEDCOLOR
-        unhighlight_color = DOWNCOLOR
+        HIGHLIGHTCOLOR=vis.DOWNUSEDCOLOR
+        UNHIGHLIGHTCOLOR = vis.DOWNCOLOR
     else:
-        unhighlight_color = ENDCOLOR
+        HIGHLIGHTCOLOR = vis.color_cycle()[0]
+        UNHIGHLIGHTCOLOR = vis.ENDCOLOR
     used = int(num_used)
     highlighted = int(num_highlighted)
     unhighlighted = used - num_highlighted
     total_cpus = int(total_cpus)
     blank = total_cpus - used
 
-    usage = unhighlight_color+"["+usage_block*unhighlighted+highlight_color+usage_block*highlighted+unhighlight_color+" "*blank+"]"+ENDCOLOR
+    usage = UNHIGHLIGHTCOLOR+"["+usage_block*unhighlighted+HIGHLIGHTCOLOR+usage_block*highlighted+UNHIGHLIGHTCOLOR+" "*blank+"]"+vis.ENDCOLOR
     return usage
 
 
@@ -437,16 +486,29 @@ def format_string(down,gpu,max_cpus,DOWNCOLOR,ENDCOLOR,max_gpus=None):
 Goes through the whole process of sorting data, highlighting, checking user options, 
 getting usage bar, and printing headers/formatting etc. 
 '''
-def display(node_specs,job_options,seed=None):
-    partition,user,group,node,all_nodes,color_random,use_ascii = job_options
-    ENDCOLOR,DOWNCOLOR, cycle, utf8_char, ascii_char, DOWNUSEDCOLOR = vis_options(seed)
+def display(node_specs,job_options,vis):
+    #partition,user,group,node,all_nodes,color_random,use_ascii = job_options
+    #ENDCOLOR,DOWNCOLOR, cycle, utf8_char, ascii_char, DOWNUSEDCOLOR = vis_options(seed)
+    ENDCOLOR = vis.ENDCOLOR
+    DOWNCOLOR = vis.DOWNCOLOR
+    DOWNUSEDCOLOR = vis.DOWNUSEDCOLOR
+    cycle = vis.color_cycle()
+    
+
+    # Working on below.... I'd like a way to make it so the different node types are generated
+    # automatically from user options. I think keeping standard and GPU is fine since this seems
+    # applicable to most clusters? But high memory nodes are not universal. Maybe other node types
+    # As well? I'll try to figure this out. Probably need to modify the scontrol nodes subroutine as well
     high_mem_nodes = []
     gpu_nodes      = []
     standard_nodes = []
-    # Group and sort nodes by type and usage
+
+    # Max CPUs and GPUs are collected for formatting
     max_cpus = 0
     max_cpu_gpu_nodes = 0
     max_gpus = 0
+
+    # Parsing node data to split up by node type for display purposes
     for key,data in node_specs.items():
         if key == "REASONS":
             pass
@@ -485,9 +547,9 @@ def display(node_specs,job_options,seed=None):
     heading_string = " System Status "
     heading_spacing = math.ceil(width/2) - math.ceil((len(heading_string)+2)/2)
     if use_ascii == False:
-        block = utf8_char
+        block = vis.utf8_char
     else:
-        block = ascii_char
+        block = vis.ascii_char
     print("="*width)
     # if anything is wonky with the user's environment (e.g. the python encoding 
     # variable is set to use ascii, this will catch it. The option to manually
@@ -525,7 +587,8 @@ def display(node_specs,job_options,seed=None):
             percentage = str(round(100*(int(CPUAlloc)/int(total_cpus)),2))+"%"
             percentage = " "*(6-len(percentage))+percentage
             state = node_specs[node]["State"]
-            usage = usage_bar(block,CPUAlloc,highlighted,total_cpus,state,seed)
+            usage = usage_bar(block,CPUAlloc,highlighted,total_cpus,state,vis)
+            # Need to add section to catch ascii formatting. Right now assumes utf8
             if state not in ["DOWN","DRAIN"]:
                 formatting_string = format_string(False,False,max_cpus,DOWNCOLOR,ENDCOLOR)
                 print(formatting_string.format(node,usage,percentage))
@@ -561,7 +624,7 @@ def display(node_specs,job_options,seed=None):
                 total_cpus = 94
             cpu_percentage = str(round(100*(int(CPUAlloc)/int(total_cpus)),2))+"%"
             state = node_specs[node]["State"]
-            usage = usage_bar(block,CPUAlloc,highlighted,total_cpus,state,seed)
+            usage = usage_bar(block,CPUAlloc,highlighted,total_cpus,state,vis)
 
 
             # Retrieve GPU usage 
@@ -570,7 +633,7 @@ def display(node_specs,job_options,seed=None):
             except KeyError:
                 total_gpus_used = 0
             total_gpus = node_specs[node]["CfgTRES"]
-            gpu_usage = usage_bar(block,total_gpus_used,highlighted_gpus,total_gpus,state,seed)+" "*(int(max_gpus)-int(total_gpus)+2)
+            gpu_usage = usage_bar(block,total_gpus_used,highlighted_gpus,total_gpus,state,vis)+" "*(int(max_gpus)-int(total_gpus)+2)
             gpu_percentage = str(round(100*(int(total_gpus_used)/int(total_gpus)),2))+"%"
             gpu_percentage = " "*(6-len(gpu_percentage))+gpu_percentage
             if state not in ["DOWN","DRAIN"]:
@@ -604,7 +667,8 @@ def display(node_specs,job_options,seed=None):
             percentage = str(round(100*(int(CPUAlloc)/int(total_cpus)),2))+"%"
             percentage = " "*(6-len(percentage))+percentage
             state = node_specs[node]["State"]
-            usage = usage_bar(block,CPUAlloc,highlighted,total_cpus,state,seed)
+            usage = usage_bar(block,CPUAlloc,highlighted,total_cpus,state,vis)
+            # Need to add section to catch ascii formatting. Right now assumes utf8
             if state not in ["DOWN","DRAIN"]:
                 formatting_string = format_string(False,False,max_cpus,DOWNCOLOR,ENDCOLOR)
                 print(formatting_string.format(node,usage,percentage))
@@ -629,39 +693,60 @@ def display(node_specs,job_options,seed=None):
     print("\n\n* Nodes in the DRAIN state will wait for all running jobs to complete\nand will not accept new jobs until they shut down and restarted\n")
     return
 
+'''
+------------------------------------------------------------------------------------------
+                                Single Node Display
+If the --node=<node_name> option is used, a single usage bar will appear with color-coded
+blocks that display resources reserved on that node by job. This information includes CPU
+count, GPU count (if applicable), job partition, job end time, and number of job 
+interrupts. 
+'''
 
-def single_node_display(node,node_dictionary,seed):
-    ENDCOLOR,DOWNCOLOR, cycle, utf8_char, ascii_char, DOWNUSEDCOLOR= vis_options(seed)
-    block = utf8_char
+def single_node_display(node,node_dictionary,use_ascii,vis):
+    # First, we'll check that the node name actually exists on the system
     if node not in node_dictionary.keys():
         print("Oops! Node not found on cluster. Check your input and try again.")
         usage(1)
+
+    # If utf-8 encoding isn't supported in the user's environment, we'll switch to ascii
     message = "Displaying usage for info for node: %s"%node
+    if use_ascii == True:
+        block = vis.ascii_char
+    else:
+        block = vis.utf8_char
     try:
         print("\n%s %s %s"%(block, message,block))
     except UnicodeEncodeError:
-        block = ascii_char
+        block = vis.ascii_char
         print("\n%s %s %s"%(block, message,block))
     print("="*len(message))
+
+    
     node_specific_dictionary = node_dictionary[node]
     state = node_specific_dictionary['State']
     node_type = node_specific_dictionary["Node_Type"]
+
+    # If the node is down or draining, we figure out why
     if state in ["DOWN","DRAIN"]:
         for r,index in node_dictionary["REASONS"].items():
            if node_specific_dictionary["Reason"] == index:
                reason = r
                break
+    # Since we're only interested in one node, let's dump the rest
     del node_dictionary
+
+
     total_cpus = int(node_specific_dictionary["CPUTot"])
-    n = 0
+    color_index = 0
+    color_cycle = vis.color_cycle()
     cpu_usage_bar = "["
     try:
         for job,data in node_specific_dictionary["JOBS"].items():
-            color = cycle[n]
+            color = color_cycle[color_index]
             node_specific_dictionary["JOBS"][job]["color"] = color
             num_cpus = int(data["CPUs"])
-            cpu_usage_bar += color + block * num_cpus + ENDCOLOR
-            n += 1
+            cpu_usage_bar += color + block * num_cpus + vis.ENDCOLOR
+            color_index += 1
     except KeyError:
         pass
     used_cpus = int(node_specific_dictionary["CPUAlloc"])
@@ -677,7 +762,7 @@ def single_node_display(node,node_dictionary,seed):
                 color = data["color"]
                 num_gpus = int(data["GPUs"])
                 used_gpus += num_gpus
-                gpu_usage_bar += color + block * num_gpus + ENDCOLOR
+                gpu_usage_bar += color + block * num_gpus + vis.ENDCOLOR
         except KeyError:
             pass
         unused_gpus = total_gpus - used_gpus
@@ -687,12 +772,14 @@ def single_node_display(node,node_dictionary,seed):
 
 
     # Print Node Data
+    DOWNCOLOR = vis.DOWNCOLOR
+    ENDCOLOR = vis.ENDCOLOR
     if state in ["DOWN","DRAIN"]:
         print(DOWNCOLOR+"State: %s -- %s"%(state,reason)+ENDCOLOR)
     else:
         print("State: %s"%state)
     print("Node Type: %s"%node_type)
-    print("Number of jobs running: %s"%n)
+    print("Number of jobs running: %s"%color_index)
     print("CPUs Available: %s | CPUs Used: %s | Percent Utilized: %s"%(total_cpus,used_cpus,percentage_usage))
     if node_type == "GPU":
         print("GPUs Available: %s | GPUs Used: %s | Percent Utilized: %s"%(total_gpus,used_gpus,gpu_percentage_usage))
@@ -753,7 +840,7 @@ if __name__ == '__main__':
             print("\nOops! Group not found. Check your options and try again.\n")
             usage(1)
     # Check if valid partition. Still unsure about getting high priority. Can dig at some point
-    if partition != None and partition not in ["standard","windfall"]:
+    if partition != None and partition not in UserSpecifications.partitions:
         print("\nOops! Partition not recognized. Check your options and try again.\n")
         usage(1)
     # If user wants to get random colors (just for fun), a random seed is set
@@ -761,12 +848,16 @@ if __name__ == '__main__':
         seed = random.randint(1,1000)
     else:
         seed =None
+
     job_data = get_scontrol_job_data()
     node_data = get_scontrol_node_data()
     merged = merge(job_data, node_data)
+
+    vis = VisOptions(seed)
     del node_data, job_data
     if node == None:
-        display(merged,job_options,seed)
+        display(merged,job_options,vis)
+        
     else:
-        single_node_display(node,merged,seed)
+        single_node_display(node,merged,use_ascii,vis)
 
