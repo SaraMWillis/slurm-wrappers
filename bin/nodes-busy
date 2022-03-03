@@ -150,6 +150,25 @@ Slurm tries to make for nice output by representing nodes in formats like:
 cpu1,cpu31,cpu[45-46,48,51-55],cpu[57-58],cpu[59-60,63],cpu[70,74]...
 which is a bummer to parse. This function is dedicated to untangling this
 '''
+
+def store_leading_zero(index):
+    if index[0] != "0":
+        index_tuple=("",index)
+    else:
+        prefix = ""
+        for i in range(0,len(index)+1):
+            if index[i] =="0":
+                prefix += index[i]
+            else:
+                tail = index[i:]
+                break
+        # Just in case a node is named something like "r0000"...
+        if tail == "":
+            tail = "0"
+            prefix = prefix[1:]
+        index_tuple = (prefix,tail)
+    return index_tuple
+
 def split_node_format(node,cpus):
     split_nodes = []
     nodes = node.split(",")
@@ -181,18 +200,29 @@ def split_node_format(node,cpus):
                if "]" in indices:
                    clustered= False
                split_indices = indices.replace("]","").split("-")
-               indices_range = range(int(split_indices[0]),int(split_indices[1])+1)
+               first_index = split_indices[0]
+               last_index = split_indices[1]
+               first_tuple = store_leading_zero(first_index)
+               last_tuple = store_leading_zero(last_index)
+               first_tuple = store_leading_zero(first_index)
+               last_tuple = store_leading_zero(last_index)
+               indices_range = range(int(first_tuple[1]),int(last_tuple[1])+1)
                for i in indices_range:
-                   reformatted_node = prefix + str(i)
+                   reformatted_node = prefix + first_tuple[0] + str(i)
+
                    split_nodes.append((reformatted_node,cpus))
            else:
                indices = item
                if "]" in indices:
                    clustered = False
                split_indices = indices.replace("]","").split("-")
-               indices_range = range(int(split_indices[0]),int(split_indices[1])+1)
+               first_index = split_indices[0]
+               last_index = split_indices[1]
+               first_tuple = store_leading_zero(first_index)
+               last_tuple = store_leading_zero(last_index)
+               indices_range = range(int(first_tuple[1]),int(last_tuple[1])+1)
                for i in indices_range:
-                   reformatted_node = prefix + str(i)
+                   reformatted_node = prefix + first_tuple[0] + str(i)
                    split_nodes.append((reformatted_node,cpus))
     return split_nodes
 
