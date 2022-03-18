@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+
+# Author: Sara Willis
+# Date  : February 23, 2022
+
+import getopt, subprocess, sys, os, getpass
+from datetime import datetime, timedelta
+
+'''
+Usage: past-jobs [-h] [-d n|--days=n]
+
+Retrieves a user's jobs submitted within the last n days. If no timeframe is specified,
+defaults to current day.
+
+
+
+
+
+
+------------------------------------------------------------------------------------------
+##########################################################################################
+                                    Subroutines                                
+##########################################################################################
+------------------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------------------
+                                      Error Message
+Used to format an error message to use red text.
+'''
+
+
+def error_message(error_string):
+    ERRCOLOR="\033[0;31m"
+    ENDCOLOR="\033[0m"  
+    print(ERRCOLOR + error_string +ENDCOLOR)
+    return
+
+
+'''
+------------------------------------------------------------------------------------------
+                                      Usage
+Only used to print the usage message. Exits with provided value after print
+'''
+
+def usage(ExitCode):
+    print("\nUsage")
+    print("------------------------------------------------------------------------------")
+    print("Command: past-jobs")
+    print("Retrieves user's past job IDs. Defaults to jobs submitted on current day.")
+    print("If -d N included, where N is an integer, retrieves jobs run in last N days\n")
+    print("Usage: past-jobs [-h|--help] [-d N|--days=N]")
+    print("Example: past-jobs -d 2\n")
+    print("------------------------------------------------------------------------------")
+    sys.exit(ExitCode)
+
+
+'''
+------------------------------------------------------------------------------------------
+                                     Job Options
+Options include -h|--help,-d N|--days=N
+
+Omitted option to select custom user. Could change at some point. 
+'''
+def args(argv):
+    d=0
+    try:
+        opts, args = getopt.getopt(argv, "hd:",["help","days="])
+        if len(opts) ==0:
+            pass
+    except getopt.GetoptError:
+        if len(argv) == 1 and "-d" in argv:
+            error_message("\nError: Days value missing.")
+        else:
+            error_message("\nError: Unrecognized option(s).")
+        usage(1)
+    try:
+        for opt, arg in opts:
+            if opt in ("-h","--help") :
+                usage(0)
+            if opt in ("-d","--days"):
+                d = arg
+                try:
+                    d = int(d)
+                except ValueError:
+                    error_message("\nError: Days must be an integer")
+                    usage(1)
+                    sys.exit(1)
+    except UnboundLocalError:
+        error_message("\nError: Days value missing.")
+        usage(1)
+    if d < 0:
+        error_message("\nMissing technology necessary to retrieve data from the future. Please choose a day value >=0")
+        usage(1)
+    return d
+
+
+'''
+------------------------------------------------------------------------------------------
+                                 Pull Job Data
+Executes SLURM's sacct to pull user jobs run in the last N days.
+'''
+
+def user_jobs(user,days):
+    today = datetime.now()
+    # Decided to shift days back one to make request more intuitive. This makes -d 1 query current day
+    # rather than last two days
+    try:
+        if days == 0:
+            start_date = today-timedelta(days)
+        else:
+            start_date = today-timedelta(days-1)
+        start_date = str((start_date)).split(' ')[0]
+   
+    except OverflowError:
+        error_message("\nWoah, that's a huge timeframe! Your job likely started running after 0 BCE. Try a smaller date range.\n\n")
+        usage(1)
+    try:
+        acct = subprocess.run(['sacct','-u',user,'-S',start_date,'-P','--format=JobID,Start,User,JobName%11,Partition,Account,State,ExitCode'],stdout=subprocess.PIPE)
+        acct_out = acct.stdout.decode("utf-8").split('\n')
+        header = acct_out[0].split("|")
+        user_data=[header]
+        for entry in acct_out[1:-1]:
+            item=entry.split("|")
+            user_data.append(item)
+        return user_data
+    except FileNotFoundError:
+        print("Oops! Something has gone wrong. Check that SLURM is available to run sacct.")
+        sys.exit(1)
+
+
+
+'''
+------------------------------------------------------------------------------------------
+                                 Display Past Jobs
+Reformats and prints past job information in a user-friendly format.
+'''
+
+def display_past_jobs(user,user_data,days):
+     header = user_data[0]
+     formatting = "{:<8} {:<11} {:<15} {:<15} {:<10} {:<10} {:<10} {:>9}"
+     length = sum([int(i) for i in formatting.replace('{:<','').replace('{:>','').replace('}','').split(' ')])
+     MESSAGECOLOR="\033[38;5;21m"
+     ENDCOLOR="\033[0m"
+     if days in (0,1):
+         display_message = "Jobs submitted by user "+user+ " today."
+     elif days == 2:
+         display_message = "Jobs submitted by user "+user+" yesterday and today."
+     else:
+         display_message = "Jobs submitted by user "+user+ " in last " + str(days) + " days."
+     print("\n"+MESSAGECOLOR +display_message.center(length + 10)+ENDCOLOR+"\n")
+     print(formatting.format(*tuple(header)))
+     print('-'*(length+8))
+     for job in user_data[1:]:
+         if "." in job[0]:
+             pass
+         else:
+             job[1] = job[1].split('T')[0]
+             job = [i.split(' ')[0][0:11] for i in job]
+             print(formatting.format(*tuple(job)))
+'''
+------------------------------------------------------------------------------------------
+##########################################################################################
+                                    Program Executes Below                                
+##########################################################################################
+------------------------------------------------------------------------------------------
+'''
+
+if __name__ == '__main__':
+    days = args(sys.argv[1:])
+    user_netid = getpass.getuser()
+    # It would be really weird if the active user weren't an active user, but what do I know?
+    getent_user = subprocess.Popen(["getent passwd %s"%user_netid],stdout=subprocess.PIPE,shell=True).communicate()[0].decode("utf-8")
+    if getent_user == "":
+        error_message("Oops! User NetID invalid.")
+        sys.exit(1)
+    else:
+        pass
+    user_data = user_jobs(user_netid,days)
+    display_past_jobs(user_netid,user_data,days)
+
+
+
