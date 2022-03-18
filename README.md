@@ -2,6 +2,7 @@
 
 > **⚠ Warning **  
 > These scripts were developed for the University of Arizona's HPC center so some pieces may be specific to our setup. These cases are being worked on to make the scripts more customizable/portable.
+> Update: nodes-busy now runs in tests on [Bridges2](https://www.psc.edu/resources/bridges-2/user-guide-2/)
 
 ## Executables
 
