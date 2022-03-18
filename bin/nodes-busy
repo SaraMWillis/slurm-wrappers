@@ -25,19 +25,7 @@ import subprocess, sys, os, random, datetime, getopt, math, re
 Different clusters have different configurations for tracking resources, specifying  node 
 types, and have different partition names. 
 
-                                         features
-                                    Under Development
-features allows for adding in special nodes. Format should be a dictionary of the form:
-   {"Display Name 1": {Field Name: "Scontrol Field", "Field Value": "Scontrol Entry}, ...}
-Display Name will be printed in the output, The value for Field Name is the entry listed
-in "scontrol show nodes --all", e.g. "AvailableFeatures", and Field Value is the value 
-associated with that entry
 '''
-
-
-class UserSpecifications:
-    partitions = ["standard","windfall","high_priority"]
-    #features = {"HiMem":{"Field Name": "AvailableFeatures","Field Value": "hi_mem"}}
 
 
 '''
@@ -62,6 +50,9 @@ class VisOptions:
     utf8_char = u'\u258B'
     ascii_char = '#'
     
+    hipri_utf=u'\u271A'
+
+    hipri_ascii="**"
     # A range of randomized colors is also generated for color-coding different jobs
     # if the "--node=nodename" option is given. This is generally deterministic, 
     # unless the --randomize flag is used. 
@@ -119,6 +110,22 @@ def args(argv):
         print("Too many options specified")
         usage(1)
     return partition,user,group, node,all_nodes,color_random, use_ascii
+    
+    
+'''
+------------------------------------------------------------------------------------------
+                                    Get Partitions
+Used to get the valid partitions available on the cluster
+'''
+def get_partitions():
+    p = subprocess.Popen(['sinfo --federation --format=%R --noheader'],stdout=subprocess.PIPE,shell=True)
+    out,err = p.communicate()
+    if err != None and err.decode("utf-8") != "":
+        print("Oops, something has gone wrong! Error occured running:\n\t'sinfo --federation --format=%R --noheader'\nThis could be a problem with your SLURM setup. Exiting.")
+        sys.exit(1)
+    output = out.decode('utf-8').split("\n")
+    partitions = [i for i in output if i != '']
+    return partitions
 
 
 '''
@@ -137,7 +144,7 @@ def usage(exit_value):
     print("                                : issues (e.g. in OOD terminals)")
     print("  --random                      : Just for fun, mix up the color display")
     print("  --all                         : Include all system nodes in --user and --group output")
-    print("\n*Valid partitions: "+",".join(UserSpecifications.partitions)+"\n")
+    print("\n*Valid partitions: "+",".join(get_partitions())+"\n")
     sys.exit(exit_value)
 
 
@@ -150,7 +157,6 @@ Slurm tries to make for nice output by representing nodes in formats like:
 cpu1,cpu31,cpu[45-46,48,51-55],cpu[57-58],cpu[59-60,63],cpu[70,74]...
 which is a bummer to parse. This function is dedicated to untangling this
 '''
-
 def store_leading_zero(index):
     if index[0] != "0":
         index_tuple=("",index)
@@ -167,6 +173,7 @@ def store_leading_zero(index):
             tail = "0"
             prefix = prefix[1:]
         index_tuple = (prefix,tail)
+
     return index_tuple
 
 def split_node_format(node,cpus):
@@ -315,7 +322,7 @@ to get comprehensive information about system use.
 def get_scontrol_node_data():
     node_data = {"REASONS":{}}
     n = 1
-    fields = ["NodeName","CPUAlloc","CPUTot","AvailableFeatures","AllocTRES","CfgTRES","State","Reason"]
+    fields = ["NodeName","CPUAlloc","CPUTot","AvailableFeatures","AllocTRES","CfgTRES","State","Reason","Partitions"]
     p = subprocess.Popen(['scontrol show nodes --all --oneliner'],stdout=subprocess.PIPE,shell=True)
     out,err = p.communicate()
     node_output = out.decode('utf-8').split("\n")
@@ -496,16 +503,16 @@ Create a formatted string for printing output.
 '''
 def format_string(down,gpu,max_cpus,DOWNCOLOR,ENDCOLOR,max_gpus=None):
     if down == True and gpu == False:
-        formatting_string = DOWNCOLOR + "{0:7}:{1:"+str(max_cpus+2)+"}"+DOWNCOLOR+" {2:>5} {3:6}[{4:1}]"+ENDCOLOR
+        formatting_string = DOWNCOLOR + "{0:7}:{1:"+str(max_cpus+2)+"}"+DOWNCOLOR+" {2:>5} {3:6}[{4:1}] {5:2}"+ENDCOLOR
     elif down == False and gpu == False:
         # Expecting input (node name, usage bar, percentage)
-        formatting_string = formatting_string ="{0:7}:{1:"+str(max_cpus+2)+"} {2:*>5}"
+        formatting_string = formatting_string ="{0:7}:{1:"+str(max_cpus+2)+"} {2:*>5} {3:2}"
     elif down == True and gpu == True:
         # Expecting input (node name, usage bar, percentage, GPU usage bar, GPU percentage, state, reason index)
-        formatting_string = DOWNCOLOR+"{0:7}:{1:"+str(max_cpus+2)+"}"+DOWNCOLOR+" {2:>5} {3:"+str(max_gpus+2)+"} "+DOWNCOLOR+"{4:>5} {5:6}[{6:1}]" + ENDCOLOR
+        formatting_string = DOWNCOLOR+"{0:7}:{1:"+str(max_cpus+2)+"}"+DOWNCOLOR+" {2:>5} {3:"+str(max_gpus+2)+"} "+DOWNCOLOR+"{4:>5} {5:6}[{6:1}] {7:2}" + ENDCOLOR
     elif down == False and gpu == True:
         # Expecting input (node name, usage bar, percentage, GPU usage bar, GPU percentage)
-        formatting_string = "{0:7}:{1:"+str(max_cpus+2)+"} {2:>6} {3:"+str(int(max_gpus)+3)+"} {4:<6}"
+        formatting_string = "{0:7}:{1:"+str(max_cpus+2)+"} {2:>6} {3:"+str(int(max_gpus)+3)+"} {4:<6} {5:2}"
     return formatting_string
 
 
@@ -537,7 +544,6 @@ def display(node_specs,job_options,vis):
     max_cpus = 0
     max_cpu_gpu_nodes = 0
     max_gpus = 0
-
     # Parsing node data to split up by node type for display purposes
     for key,data in node_specs.items():
         if key == "REASONS":
@@ -578,8 +584,10 @@ def display(node_specs,job_options,vis):
     heading_spacing = math.ceil(width/2) - math.ceil((len(heading_string)+2)/2)
     if use_ascii == False:
         block = vis.utf8_char
+        hipri=vis.hipri_utf
     else:
         block = vis.ascii_char
+        hipri=vis.hipri_ascii
     print("="*width)
     # if anything is wonky with the user's environment (e.g. the python encoding 
     # variable is set to use ascii, this will catch it. The option to manually
@@ -588,7 +596,8 @@ def display(node_specs,job_options,vis):
     try:
         print("\n"+" "*heading_spacing +  block + heading_string + block)
     except UnicodeEncodeError:
-        block = ascii_char
+        block = vis.ascii_char
+        hipri=vis.hipri_ascii
         print("\n"+" "*heading_spacing +  block + heading_string + block)
     print(" "*time_spacing + time_string)
     if partition != None:
@@ -607,6 +616,11 @@ def display(node_specs,job_options,vis):
     for data in standard_nodes:
         node,CPUAlloc = data
         highlighted = node_specs[node]["highlighted_cpus"]
+        allowed_partitions = set(node_specs[node]["Partitions"].split(","))
+        if allowed_partitions == set({"windfall","high_priority"}):
+            annotate = hipri
+        else:
+            annotate = ""
         if (user != None or group != None) and highlighted == 0 and all_nodes==False:
             pass
         else:
@@ -621,19 +635,18 @@ def display(node_specs,job_options,vis):
             # Need to add section to catch ascii formatting. Right now assumes utf8
             if state not in ["DOWN","DRAIN"]:
                 formatting_string = format_string(False,False,max_cpus,DOWNCOLOR,ENDCOLOR)
-                print(formatting_string.format(node,usage,percentage))
+                print(formatting_string.format(node,usage,percentage,annotate))
             else:
                 reason = node_specs[node]["Reason"]
 
                 formatting_string = format_string(True,False,max_cpus,DOWNCOLOR,ENDCOLOR)
-                print(formatting_string.format(node,usage,percentage,state,reason))
+                print(formatting_string.format(node,usage,percentage,state,reason,annotate))
     if jobs_found == False and user != None:
         print("No user jobs found")
     if jobs_found == False and group != None:
         print("No jobs matching %s group"%group)
     elif jobs_found == False and user == None:
         print("No nodes found")
-
     # Display GPU Nodes
     print("\nGPU Nodes")
     heading_string = "{0:9} {1:>%d}"%(max_cpu_gpu_nodes+10)
@@ -643,6 +656,11 @@ def display(node_specs,job_options,vis):
     node_specs = highlight(gpu_nodes,node_specs,partition,user,group)
     for data in gpu_nodes:
         node,CPUAlloc = data
+        allowed_partitions = set(node_specs[node]["Partitions"].split(","))
+        if allowed_partitions == set({"windfall","high_priority"}):
+            annotate = hipri
+        else:
+            annotate = ""
         highlighted = node_specs[node]["highlighted_cpus"]
         highlighted_gpus = node_specs[node]["highlighted_gpus"]
         if (user != None or group != None) and highlighted == 0 and all_nodes == False:
@@ -668,24 +686,28 @@ def display(node_specs,job_options,vis):
             gpu_percentage = " "*(6-len(gpu_percentage))+gpu_percentage
             if state not in ["DOWN","DRAIN"]:
                 formatting_string = format_string(False,True,max_cpu_gpu_nodes,DOWNCOLOR,ENDCOLOR,max_gpus)
-                print(formatting_string.format(node,usage,cpu_percentage,gpu_usage,gpu_percentage))
+                print(formatting_string.format(node,usage,cpu_percentage,gpu_usage,gpu_percentage,annotate))
             else:
                 reason = node_specs[node]["Reason"]
                 formatting_string = format_string(True,True,max_cpu_gpu_nodes,DOWNCOLOR,ENDCOLOR,max_gpus)
-                print(formatting_string.format(node,usage,cpu_percentage,gpu_usage,gpu_percentage,state,reason))
+                print(formatting_string.format(node,usage,cpu_percentage,gpu_usage,gpu_percentage,state,reason,annotate))
     if jobs_found == False and user != None:
         print("No user jobs found")
     elif jobs_found == False and group != None:
         print("No jobs matching %s group"%group)
     elif jobs_found == False and user == None:
         print("No nodes found")
-
     print("\nHigh Memory Nodes")
     print("="*width)
     jobs_found = False
     node_specs = highlight(high_mem_nodes,node_specs,partition,user,group)
     for data in high_mem_nodes:
         node,CPUAlloc = data
+        allowed_partitions = set(node_specs[node]["Partitions"].split(","))
+        if allowed_partitions == set({"windfall","high_priority"}):
+            annotate = hipri
+        else:
+            annotate = ""
         highlighted = node_specs[node]["highlighted_cpus"]
         if (user != None or group != None) and highlighted == 0 and all_nodes == False:
             pass
@@ -701,12 +723,12 @@ def display(node_specs,job_options,vis):
             # Need to add section to catch ascii formatting. Right now assumes utf8
             if state not in ["DOWN","DRAIN"]:
                 formatting_string = format_string(False,False,max_cpus,DOWNCOLOR,ENDCOLOR)
-                print(formatting_string.format(node,usage,percentage))
+                print(formatting_string.format(node,usage,percentage,annotate))
             else:
                 reason = node_specs[node]["Reason"]
 
                 formatting_string = format_string(True,False,max_cpus,DOWNCOLOR,ENDCOLOR)
-                print(formatting_string.format(node,usage,percentage,state,reason))
+                print(formatting_string.format(node,usage,percentage,state,reason,annotate))
     if jobs_found == False and user != None:
         print("No user jobs found")
     elif jobs_found == False and group != None:
@@ -720,7 +742,8 @@ def display(node_specs,job_options,vis):
     print("="*width)
     for i,j in node_specs["REASONS"].items():
         print("[%s] %s"%(j,i))
-    print("\n\n* Nodes in the DRAIN state will wait for all running jobs to complete\nand will not accept new jobs until they shut down and restarted\n")
+    print("\n\n* Nodes in the DRAIN state will wait for all running jobs to complete\nand will not accept new jobs without manual intervention\n")
+    print(hipri+" Buy-in nodes. Only accept high_priority and windfall jobs")
     return
 
 '''
@@ -755,7 +778,11 @@ def single_node_display(node,node_dictionary,use_ascii,vis):
     node_specific_dictionary = node_dictionary[node]
     state = node_specific_dictionary['State']
     node_type = node_specific_dictionary["Node_Type"]
-
+    allowed_partitions=set(node_specific_dictionary["Partitions"].split(","))
+    if allowed_partitions == set(["windfall","high_priority"]):
+        buy_in = True
+    else:
+        buy_in = False
     # If the node is down or draining, we figure out why
     if state in ["DOWN","DRAIN"]:
         for r,index in node_dictionary["REASONS"].items():
@@ -809,6 +836,7 @@ def single_node_display(node,node_dictionary,use_ascii,vis):
     else:
         print("State: %s"%state)
     print("Node Type: %s"%node_type)
+    print("Buy-In Node: %s  **"%buy_in)
     print("Number of jobs running: %s"%color_index)
     print("CPUs Available: %s | CPUs Used: %s | Percent Utilized: %s"%(total_cpus,used_cpus,percentage_usage))
     if node_type == "GPU":
@@ -842,7 +870,7 @@ def single_node_display(node,node_dictionary,use_ascii,vis):
     except KeyError:
         print("None")
 
-
+    print("** Buy-in nodes only accept high_priority and windfall jobs")
 '''
 ------------------------------------------------------------------------------------------
 ##########################################################################################
@@ -852,9 +880,12 @@ def single_node_display(node,node_dictionary,use_ascii,vis):
 '''
 
 if __name__ == '__main__':
+
     print("\nnodes-busy: visualize live system resource usage.\nTrouble seeing the output? Try 'nodes-busy --ascii'\n")
+    
     job_options = args(sys.argv[1:])
     partition,user,group,node,all_nodes,color_random,use_ascii = job_options
+    
     # Check if valid user
     if user != None:
         p = subprocess.Popen(['getent passwd '+user],stdout=subprocess.PIPE, shell=True)
@@ -862,6 +893,7 @@ if __name__ == '__main__':
         if out.decode('utf-8') == '':
             print("\nOops! User not found. Check your options and try again.\n")
             usage(1)
+            
     # Check if valid group
     if group != None:
         p = subprocess.Popen(['getent group '+group],stdout=subprocess.PIPE, shell=True)
@@ -869,9 +901,11 @@ if __name__ == '__main__':
         if out.decode('utf-8') == '':
             print("\nOops! Group not found. Check your options and try again.\n")
             usage(1)
-    # Check if valid partition. Still unsure about getting high priority. Can dig at some point
-    if partition != None and partition not in UserSpecifications.partitions:
-        print("\nOops! Partition not recognized. Check your options and try again.\n")
+          
+    # Check if valid partition.         
+    valid_partitions = get_partitions()
+    if partition != None and partition not in valid_partitions:
+        print("\nOops! Partition not recognized.\n")
         usage(1)
     # If user wants to get random colors (just for fun), a random seed is set
     if color_random != False:
@@ -879,8 +913,13 @@ if __name__ == '__main__':
     else:
         seed =None
 
+    # Pull job data using "scontrol show jobs --all"
     job_data = get_scontrol_job_data()
+    
+    # Pull job data using "scontrol show nodes --all"
     node_data = get_scontrol_node_data()
+    
+    # Merge the two dictionaries above to create one 
     merged = merge(job_data, node_data)
 
     vis = VisOptions(seed)
