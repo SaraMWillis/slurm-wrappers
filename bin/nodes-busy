@@ -294,7 +294,7 @@ def split_node_format(NodeList,cpus):
                     leading_val = store_leading_zero(first_index)
                     index_range = range(int(first_index),int(second_index)+1)
                     for index in index_range:
-                        if len(str(index)) > 1:# and node_prefix + leading_val + str(index) not in nodes_dictionary.keys():
+                        if len(str(index)) > len(str(index_range[0])):# and node_prefix + leading_val + str(index) not in nodes_dictionary.keys():
                             split_nodes.append((node_prefix + str(index),cpus))
                         else:
                             split_nodes.append((node_prefix + leading_val + str(index),cpus))
