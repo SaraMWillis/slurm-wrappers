@@ -5,6 +5,7 @@
 > Update: nodes-busy now runs in tests on: 
 >   - [Bridges2](https://www.psc.edu/resources/bridges-2/user-guide-2/)
 >   - [Expanse](https://www.sdsc.edu/services/hpc/expanse/)
+>   - [Stampede2](https://portal.tacc.utexas.edu/user-guides/stampede2#introduction)
 >   - [University of Arizona](https://public.confluence.arizona.edu/display/UAHPC)
 >   
 ## Executables
