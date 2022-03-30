@@ -295,7 +295,10 @@ def split_node_format(NodeList,cpus):
                     leading_val = store_leading_zero(first_index)
                     index_range = range(int(first_index),int(second_index)+1)
                     for index in index_range:
-                        split_nodes.append((node_prefix + leading_val + str(index),cpus))
+                        if len(str(index)) > 1:# and node_prefix + leading_val + str(index) not in nodes_dictionary.keys():
+                            split_nodes.append((node_prefix + str(index),cpus))
+                        else:
+                            split_nodes.append((node_prefix + leading_val + str(index),cpus))
         else:
             split_nodes += [(n,cpus) for n in i.split(",")]
 
@@ -863,7 +866,7 @@ def display_node_type(node_specs,ntype,nval,job_options,vis):
                         formatting_string = format_string(True,False,max_cpus,DOWNCOLOR,ENDCOLOR)
                         print(formatting_string.format(node,usage,percentage,state,reason,annotate))
                     else:
-                        formatting_string = format_string(True,True,max_cpu_gpu_nodes,DOWNCOLOR,ENDCOLOR,max_gpus)
+                        formatting_string = format_string(True,True,max_cpus,DOWNCOLOR,ENDCOLOR,max_gpus)
                         print(formatting_string.format(node,usage,percentage,gpu_usage,gpu_percentage,state,reason,annotate))
         if jobs_found == False and user != None:
             print("No user jobs found")
