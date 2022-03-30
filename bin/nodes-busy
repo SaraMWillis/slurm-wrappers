@@ -242,7 +242,6 @@ which is a bummer to parse. These functions are dedicated to untangling this.
 # This bit catches the cases where a node name might be something like node01
 # since this might be stored as node
 def store_leading_zero(index):
-    print(index)
     if index[0] != "0" or index == "0":
         prefix=""
     else:
