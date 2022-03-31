@@ -1141,8 +1141,6 @@ def single_node_display(node,node_dictionary,use_ascii,vis):
 
 if __name__ == '__main__':
 
-    print("\nnodes-busy: visualize live system resource usage.\nTrouble seeing the output? Try 'nodes-busy --ascii'\n")
-    
     # Made job options a class instead of a function so it wouldn't have to be batted around 
     # like a beach ball
     job_options = Args(sys.argv[1:])
