@@ -34,10 +34,10 @@ import subprocess, sys, os, random, datetime, getopt, math, re
 
 '''
 
-# Another possible option. Add annotations next to a specific node type. E.g., UArizona's
+# Add annotations next to a specific node type. E.g., UArizona's
 # system adds an annotation for buy-in nodes. 
 # The format for this should be a dictionary with:
-# {AnnotationDescription: "Ascii Symbol": "symbol here", "UTF-8 Symbol": "symbol here", "Field": "scontrol field", "Value": "field value", "Message": "display message at bottom of output"}
+# {AnnotationDescription: {"Ascii Symbol": "symbol here", "UTF-8 Symbol": "symbol here", "Field": "scontrol field", "Value": "field value", "Message": "display message at bottom of output"}}
 # This will annotate specific nodes with something like (assuming ascii symbol = **):
 
 # NodeName1 [####   ] x% **
@@ -48,16 +48,29 @@ import subprocess, sys, os, random, datetime, getopt, math, re
 # If annotations are not desired, set node_annotations = None
 global node_annotations
 node_annotations = {"HiPri": {"Ascii Symbol":"*","UTF-8 Symbol":u'\u271A',"Field":"Partitions","Value":"windfall,high_priority","Message":"Buy-in nodes. Only accept high_priority and windfall jobs"},
-                    "Test": {"Ascii Symbol":"+","UTF-8 Symbol":u'\u25A3', "Field": "Gres","Value": "gpu:kepler:1", "Message":"This is a test"}
+                    #"Test": {"Ascii Symbol":"+","UTF-8 Symbol":u'\u25A3', "Field": "Gres","Value": "gpu:kepler:1", "Message":"This is a test"},
+                    #"standard" : {"Ascii Symbol": "++","UTF-8 Symbol":"++", "Field":"Partitions","Value":"windfall,standard","Message":"Normal Partitions"}
                     }
 
-# Trying a more systematic way of specifying node types.
-# Priority is used to help with grouping.
+
+# node_types allows you to separate nodes into clusters that are displayed together. It relies on finding 
+# a specified value in a "scontrol show nodes --all" field. 
+
+# These groupings also have a priority value associated with them. This priority controls how to sort nodes 
+# that have more than one node type. For example,
+# if a node was both a GPU node and buy-in, the priority value would determine whether that node was displayed in
+# the buy-in group or the gpu group. Higher priority values indicate higher group priority. In this case, based
+# on the configuration below, because buy-in nodes have priority 4 > gpu nodes priority 2, this node would be
+# displayed in the buy-in group. 
+
+# The first entry in the dictionary below ("Standard Nodes") should be kept, it is the default grouping for
+# all nodes. Additionally, the Field and Value entries should be kept None. However, the Name can be changed
+# which is what's displayed. 
 global node_types
-node_types = {"Standard Nodes"    : {"Name" :"Standard Nodes", "Field": None, "Value":None,"Priority":1},
-              "Buy-In Nodes"      : {"Name": "Buy-In Nodes","Field":"Partitions", "Value":"windfall,high_priority","Priority":4},
-              "GPU Nodes"         : {"Name": "GPU Nodes","Field":["AllocTRES","CfgTRES"],"Value":"gpu","Priority":2},
-              "High Memory Nodes" : {"Name": "High Memory Nodes","Field":"AvailableFeatures","Value":"hi_mem","Priority":3}
+node_types = {"Standard Nodes"    : {"Name" :"Standard Nodes"    ,"Field": None                  ,"Value":None                    ,"Priority":0},
+              "Buy-In Nodes"      : {"Name" : "Buy-In Nodes"     ,"Field":"Partitions"           ,"Value":"windfall,high_priority","Priority":4},
+              "GPU Nodes"         : {"Name" : "GPU Nodes"        ,"Field":["AllocTRES","CfgTRES"],"Value":"gpu"                   ,"Priority":2},
+              "High Memory Nodes" : {"Name" : "High Memory Nodes","Field":"AvailableFeatures"    ,"Value":"hi_mem"                ,"Priority":3}
               }
 
 # This was built into the script for University of Arizona's systems. We have nodes with 96 CPUs
@@ -88,6 +101,7 @@ cpu_limits = {"96":"94"}
 ------------------------------------------------------------------------------------------
                                    Vis Options
 ******************************************************************************************
+Contains colors and utf-8/ascii characters that are used in the output
 '''
 class VisOptions:
     def __init__(self,seed, use_ascii):
@@ -132,14 +146,13 @@ class VisOptions:
 
 
 '''
-WHY NOT LET'S JUST MAKE THIS PROCESS STUPID AND MAKE THIS A CLASS WOOOOO
 ------------------------------------------------------------------------------------------
                                      Job Options
-Options include --user=username, --partition=queue, --help, and --node=nodename, --ascii
 '''
 class Args:
     def __init__(self,argv):
-        
+        ERRORCOLOR="\033[0;31m"
+        ENDCOLOR = "\033[0m"
         self.argv = argv
         
         self.partition=self.user=self.group=self.node=None
@@ -150,7 +163,7 @@ class Args:
             if len(opts) ==0:
                 return
         except getopt.GetoptError:
-            print("Unrecognized Option")
+            print(ERRORCOLOR+"Unrecognized Option"+ENDCOLOR)
             usage(1)
         for opt, arg in opts:
             if opt in ("-h","--help"):
@@ -177,13 +190,16 @@ class Args:
                     self.scale = True
                     self.scaled_width=int(arg)
                 except ValueError:
-                    print("Width must be an integer")
+                    print(ERRORCOLOR + "Width must be an integer"+ENDCOLOR)
                     usage(1)
             else:
-                print("Unrecognized option.")
+                print(ERRORCOLOR+"Unrecognized option."+ENDCOLOR)
                 usage(1)
         if [self.partition,self.user,self.group,self.node].count(None) < 3:
-            print("Too many options specified")
+            print(ERRORCOLOR+"Too many options specified"+ENDCOLOR)
+            usage(1)
+        if self.node != None and self.scale == True:
+            print(ERRORCOLOR+"Oops! Options --scale and --node are mutually exclusive. Please include one or the other"+ENDCOLOR)
             usage(1)
 
 
@@ -212,18 +228,22 @@ def get_partitions():
 Only used to print the usage message. Exits with provided value after print
 '''
 def usage(exit_value):
+    print("=============================================================================================")
     print("Usage: nodes-busy [--OPTION=VALUE|--VIS_OPTIONS|--help]")
     print("\nValid OPTION/VALUE combinations : Only one OPTION/VALUE can be specified")
     print("  --partiton=<partition*>       : Highlights all CPUs/GPUs reserved by specified partition")
-    print("  --user=netid                  : Highlights all CPUs/GPUs reserved by <netid>'s jobs")
-    print("  --group=gid                   : Highlights all CPUs/GPUs reserved by <gid>'s jobs")
+    print("  --user=<netid>                : Highlights all CPUs/GPUs reserved by <netid>'s jobs")
+    print("  --group=<gid>                 : Highlights all CPUs/GPUs reserved by <gid>'s jobs")
+    print("  --node=<nodename>**           : Displays detailed usage of specified node")
     print("\nValid VIS_OPTIONS               : Optional. More than one can be selected")
     print("  --ascii                       : Use ascii encoding instead of utf-8. Can resolve formatting")
     print("                                : issues (e.g. in OOD terminals)")
     print("  --random                      : Just for fun, mix up the color display")
     print("  --all                         : Include all system nodes in --user and --group output")
-    print("  --scale                       : Scales node sizes down to 80 characters")
+    print("  --scale**                     : Scales node sizes down to 80 characters")
+    print("  --width=<n>**                 : Scales node sizes to <n> characters")
     print("\n*Valid partitions: "+",".join(get_partitions())+"\n")
+    print("**Scale/width options are mutually exclusive with --node option")
     sys.exit(exit_value)
 
 
@@ -236,11 +256,16 @@ def usage(exit_value):
 Slurm tries to make for nice output by representing nodes in formats like:
 cpu1,cpu31,cpu[45-46,48,51-55],cpu[57-58],cpu[59-60,63],cpu[70,74]...
 which is a bummer to parse. These functions are dedicated to untangling this.
+As far as I'm aware, there isn't a way to print node lists in long form with
+scontrol. If I'm wrong on this, let me know.
 
 '''
 
 # This bit catches the cases where a node name might be something like node01
-# since this might be stored as node
+# We need to pull the leading zero(s) and hang onto it/them. This is because to unpack
+# node lists effectively, we'll need to generate a range of integers which will eliminate
+# leading zeros. Trying to paste those indices back together with the node prefix will
+# lead to an invalid node name causing a dictionary error later in this pipeline. 
 def store_leading_zero(index):
     if index[0] != "0" or index == "0":
         prefix=""
@@ -277,14 +302,16 @@ def split_node_format(NodeList,cpus):
         # we need to unpack the index values. 
         if "[" in i:
             node_prefix,indices = i.split("[")
-            # Unpack any 
+            # Unpack any clustered indices
             if "," in node_prefix:
                 node_cluster = node_prefix.split(",")
                 leading_nodes = node_cluster[:-1]
                 node_prefix= node_cluster[-1]
                 split_nodes += [(n,cpus) for n in leading_nodes]
             v_ranges = indices.split(",")
-
+            # For each range of indices shown as 1-10, or 002-010 (bummer), we'll 
+            # grab the leading zeros so that the indices can be converted to integers
+            # and will then generate a range
             for r in v_ranges:
                 r_split = r.split("-")
                 if len(r_split) == 1:
@@ -293,15 +320,17 @@ def split_node_format(NodeList,cpus):
                     first_index, second_index = r_split
                     leading_val = store_leading_zero(first_index)
                     index_range = range(int(first_index),int(second_index)+1)
+                    previous_index = index_range[0]
                     for index in index_range:
-                        if len(str(index)) > len(str(index_range[0])):# and node_prefix + leading_val + str(index) not in nodes_dictionary.keys():
-                            split_nodes.append((node_prefix + str(index),cpus))
-                        else:
-                            split_nodes.append((node_prefix + leading_val + str(index),cpus))
+			# Another frustration here. If we transition from a single digit to double-digit
+			# index, we might see: node[01-10], which will generate:
+			# node01,node02,...,node010. We want to avoid this, so a length comparison is
+			# used. It's (highly) probable another issue will crop up sometime. Sigh. 
+                        if len(str(index)) > len(str(previous_index)) and leading_val != "":
+                            leading_val = leading_val[1:]
+                        split_nodes.append((node_prefix + leading_val + str(index),cpus))
         else:
             split_nodes += [(n,cpus) for n in i.split(",")]
-
-
     return split_nodes
 
 
@@ -436,8 +465,10 @@ def get_scontrol_node_data():
                 if node_annotations != None and j.split("=")[1] in [i["Value"] for i in node_annotations.values()]:
                     for f,v in node_annotations.items():
                         if v["Field"] == field and v["Value"] == j.split("=")[1]:
-                            node_data[Node_Name]["Annotation"] = {"Ascii": v["Ascii Symbol"],"UTF-8": v["UTF-8 Symbol"]}
-
+                            if node_data[Node_Name]["Annotation"] ==None:
+                                node_data[Node_Name]["Annotation"] = {f: {"Ascii": v["Ascii Symbol"],"UTF-8": v["UTF-8 Symbol"]} }
+                            else:
+                                node_data[Node_Name]["Annotation"][f] = {"Ascii": v["Ascii Symbol"],"UTF-8": v["UTF-8 Symbol"]} 
                 # Next, we check if a specified node type was found
                 if field in ufields.keys():
                     if ufields[field][0] in j:
@@ -794,7 +825,7 @@ def display_node_type(node_specs,ntype,nval,job_options,vis):
     all_nodes = job_options.all_nodes
 
     # Choose usage block based on whether ascii is needed
-    if vis.use_ascii == True:
+    if job_options.use_ascii == True:
         block = vis.ascii_char
     else:
         block = vis.utf8_char
@@ -814,13 +845,19 @@ def display_node_type(node_specs,ntype,nval,job_options,vis):
             highlighted = node_specs[node]["highlighted_cpus"]
             highlighted_gpus = node_specs[node]["highlighted_gpus"]
             if node_specs[node]["Annotation"] ==None:
-                annotate= ""
-            elif vis.use_ascii == True:
-                annotate = node_specs[node]["Annotation"]["Ascii"]
-                vis.valid_annotations.add(annotate)
+                annotate=""
+            elif job_options.use_ascii == True:
+                annotate=[]
+                for ann in node_specs[node]["Annotation"].values():
+                    annotate.append(ann["Ascii"])
+                    vis.valid_annotations.add(ann["Ascii"])
+                annotate = ",".join(annotate)
             else:
-                annotate = node_specs[node]["Annotation"]["UTF-8"]
-                vis.valid_annotations.add(annotate)
+                annotate=[]
+                for ann in node_specs[node]["Annotation"].values():
+                    annotate.append(ann["UTF-8"])
+                    vis.valid_annotations.add(ann["UTF-8"])
+                annotate = ",".join(annotate)
             
             # Add bit about annotation here. Specifically related to "annotate" Will ignore until user options are more well-defined
             if (user != None or group != None) and highlighted == 0 and all_nodes==False:
@@ -895,7 +932,7 @@ def display(node_specs,job_options,vis):
     DOWNUSEDCOLOR = vis.DOWNUSEDCOLOR
     cycle = vis.color_cycle()
     max_cpus = node_specs["MAX_CPUS"]
-    if job_options.scale == True and max_cpus > job_options.scaled_width:
+    if job_options.scale == True and max_cpus != job_options.scaled_width:
         job_options.scale_ratio = job_options.scaled_width/max_cpus
         node_specs=scale(node_specs,job_options,vis)
         vis.utf8_char=vis.scale_utf8_char
@@ -935,12 +972,12 @@ def display(node_specs,job_options,vis):
     if len(vis.valid_annotations) != 0:
         print("\nNode Annotations"+"\n"+"="*width)
         for a,v in node_annotations.items():
-            if vis.use_ascii == True:
+            if job_options.use_ascii == True:
                 a_s = v["Ascii Symbol"]
             else:
                 a_s = v["UTF-8 Symbol"]
             if a_s in vis.valid_annotations:
-                print("{0:4} {1:100}".format(a_s,v["Message"]))
+                print("{0:4} {1:50}".format(a_s,v["Message"]))
     return
     
     
@@ -952,7 +989,6 @@ def display(node_specs,job_options,vis):
 
 '''
 ******************************************************************************************
-HAVEN'T EVEN STARTED HERE -_-
 ------------------------------------------------------------------------------------------
                                 Single Node Display
 If the --node=<node_name> option is used, a single usage bar will appear with color-coded
@@ -969,7 +1005,7 @@ def single_node_display(node,node_dictionary,use_ascii,vis):
 
     # If utf-8 encoding isn't supported in the user's environment, we'll switch to ascii
     message = "Displaying usage info for node: %s"%node
-    if vis.use_ascii == True:
+    if job_options.use_ascii == True:
         block = vis.ascii_char
     else:
         block = vis.utf8_char
@@ -977,30 +1013,30 @@ def single_node_display(node,node_dictionary,use_ascii,vis):
         print("\n%s %s %s"%(block, message,block))
     except UnicodeEncodeError:
         block = vis.ascii_char
+        job_options.use_ascii = True
         print("\n%s %s %s"%(block, message,block))
-    print("="*len(message))
+    horizontal_line = "="*(len(message) + 4)
+    print(horizontal_line)
 
-    
+    # Grab data about this specific node 
     node_specific_dictionary = node_dictionary[node]
     state = node_specific_dictionary['State']
     node_type = node_specific_dictionary["Node_Type"]
-    allowed_partitions=set(node_specific_dictionary["Partitions"].split(","))
-    print(node_specific_dictionary["Annotation"])
-    sys.exit(0)
-    if allowed_partitions == set(["windfall","high_priority"]):
-        buy_in = True
-    else:
-        buy_in = False
-    # If the node is down or draining, we figure out why
+    allowed_partitions=get_partitions()
+ 
+    # If this node is down, we'll find out and display why
     if state in ["DOWN","DRAIN"]:
         for r,index in node_dictionary["REASONS"].items():
            if node_specific_dictionary["Reason"] == index:
                reason = r
                break
+
     # Since we're only interested in one node, let's dump the rest
     del node_dictionary
 
-
+    # The goal now is to display all the CPUs reserved by individual user jobs. Each
+    # unique user job will receive its own color so they can be distinguished. We'll 
+    # build the usage bar here.
     total_cpus = int(node_specific_dictionary["CPUTot"])
     color_index = 0
     color_cycle = vis.color_cycle()
@@ -1018,6 +1054,7 @@ def single_node_display(node,node_dictionary,use_ascii,vis):
     unused_cpus = total_cpus - used_cpus
     cpu_usage_bar = cpu_usage_bar + " "*unused_cpus+ "]"
     used_gpus = 0
+
     # Get GPUs if applicable
     if node_type == "GPU":
         total_gpus = int(node_specific_dictionary["CfgTRES"])
@@ -1044,12 +1081,23 @@ def single_node_display(node,node_dictionary,use_ascii,vis):
     else:
         print("State: %s"%state)
     print("Node Type: %s"%node_type)
-    print("Buy-In Node: %s  **"%buy_in)
+    print("Allowed Partitions: %s"%','.join(allowed_partitions))
     print("Number of jobs running: %s"%color_index)
     print("CPUs Available: %s | CPUs Used: %s | Percent Utilized: %s"%(total_cpus,used_cpus,percentage_usage))
     if node_type == "GPU":
-        print("GPUs Available: %s | GPUs Used: %s | Percent Utilized: %s"%(total_gpus,used_gpus,gpu_percentage_usage))
-    print()
+        print("GPUs Available: %s | GPUs Used: %s | Percent Utilized: %s\n"%(total_gpus,used_gpus,gpu_percentage_usage))
+    
+    # If this node has specific annotations, they are printed here
+    if node_specific_dictionary["Annotation"] != None:
+        print("\nNode Annotations:")
+        for key,ann in node_specific_dictionary["Annotation"].items():
+            if job_options.use_ascii == True:    
+                print("{0:3}: {1:50}".format(ann["Ascii"],node_annotations[key]["Message"]))
+            else:
+                print("{0:3}: {1:50}".format(ann["UTF-8"],node_annotations[key]["Message"]))
+    print(horizontal_line+"\n")
+   
+    # Slightly different formatting options for 
     if node_type =="GPU":
         format_string = "{0:"+str(len(node))+"} {1:"+str(total_cpus+3)+"} {2:"+str(total_gpus+3)+"}"
         print(format_string.format("Node","CPU Usage","GPU Usage"))
@@ -1059,7 +1107,7 @@ def single_node_display(node,node_dictionary,use_ascii,vis):
         print(format_string.format("Node","CPU Usage"))
         print("%s:%s"%(node,cpu_usage_bar))
     print("\nJobs")
-    print("="*len(message))
+    print(horizontal_line)
     if node_type == "GPU":
         job_formatting_string = "{0:10} {1:8} {2:10} {3:4} {4:4} {5:8} {6:15}"
         print(job_formatting_string.format("Color","Job ID","Partition","CPUs","GPUs","Restarts","End Date/Time"))
@@ -1076,10 +1124,8 @@ def single_node_display(node,node_dictionary,use_ascii,vis):
             else:
                 print(job_formatting_string.format(identifier, str(job), data["Partition"],str(data["CPUs"]),data["Restarts"],end_time))
     except KeyError:
-        print("None")
-
-    print("** Buy-in nodes only accept high_priority and windfall jobs")
-    
+        print(DOWNCOLOR+"\nNo jobs to display"+vis.ENDCOLOR)
+    print()
     
     
     
