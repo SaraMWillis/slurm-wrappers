@@ -33,8 +33,6 @@ import subprocess, sys, os, random, datetime, getopt, math, re
 ------------------------------------------------------------------------------------------
 
 
-                                    User Specifications
-
 '''
 
 # Add annotations next to a specific node type. E.g., UArizona's
@@ -66,12 +64,13 @@ node_annotations = {"HiPri": {"Ascii Symbol":"*","UTF-8 Symbol":u'\u271A',"Field
 # on the configuration below, because buy-in nodes have priority 4 > gpu nodes priority 2, this node would be
 # displayed in the buy-in group. 
 
-# The first entry in the dictionary below ("Standard Nodes") should be kept, it is the default grouping for
+# --> The first entry in the dictionary below ("Standard Nodes") should be kept, it is the default grouping for
 # all nodes. Additionally, the Field and Value entries should be kept None. However, the Name can be changed
-# which is what's displayed. 
+# which is what's displayed. GPU Nodes should also be kept since this is used for display purposes. The name 
+# Can be changed if desired.
 global node_types
 node_types = {"Standard Nodes"    : {"Name" :"Standard Nodes"    ,"Field": None                  ,"Value":None                    ,"Priority":0},
-              "Buy-In Nodes"      : {"Name" : "Buy-In Nodes"     ,"Field":"Partitions"           ,"Value":"windfall,high_priority","Priority":4},
+              #"Buy-In Nodes"      : {"Name" : "Buy-In Nodes"     ,"Field":"Partitions"           ,"Value":"windfall,high_priority","Priority":4},
               "GPU Nodes"         : {"Name" : "GPU Nodes"        ,"Field":["AllocTRES","CfgTRES"],"Value":"gpu"                   ,"Priority":2},
               "High Memory Nodes" : {"Name" : "High Memory Nodes","Field":"AvailableFeatures"    ,"Value":"hi_mem"                ,"Priority":3}
               }
@@ -1059,7 +1058,7 @@ def single_node_display(node,node_dictionary,use_ascii,vis):
     used_gpus = 0
 
     # Get GPUs if applicable
-    if node_type == "GPU":
+    if node_type == "GPU Nodes":
         total_gpus = int(node_specific_dictionary["CfgTRES"])
         gpu_usage_bar = "["
         try:
@@ -1101,7 +1100,7 @@ def single_node_display(node,node_dictionary,use_ascii,vis):
     print(horizontal_line+"\n")
    
     # Slightly different formatting options for 
-    if node_type =="GPU":
+    if node_type =="GPU Nodes":
         format_string = "{0:"+str(len(node))+"} {1:"+str(total_cpus+3)+"} {2:"+str(total_gpus+3)+"}"
         print(format_string.format("Node","CPU Usage","GPU Usage"))
         print("%s:%s  %s"%(node,cpu_usage_bar,gpu_usage_bar))
