@@ -32,42 +32,50 @@ import subprocess, sys, os, random, datetime, getopt, math, re
 ##########################################################################################
 ------------------------------------------------------------------------------------------
 
-
+Need to make some adjustments? Options exist here to add annotations to nodes
 '''
 
-# Add annotations next to a specific node type. E.g., UArizona's
-# system adds an annotation for buy-in nodes. 
-# The format for this should be a dictionary with:
-# {AnnotationDescription: {"Ascii Symbol": "symbol here", "UTF-8 Symbol": "symbol here", "Field": "scontrol field", "Value": "field value", "Message": "display message at bottom of output"}}
-# This will annotate specific nodes with something like (assuming ascii symbol = **):
+# Options described below with instructions
 
-# NodeName1 [####   ] x% **
-# NodeName2 [####   ] x%
-# ...
-# ** Node annotation
-# 
-# If annotations are not desired, set node_annotations = None
+'''
+Node Annotations:
+----------------
+Add annotations next to a specific node type. E.g., UArizona's system adds an annotation for 
+buy-in nodes. The format for this should be a dictionary with the following entries:
+
+{AnnotationDescription: {"Ascii Symbol": "symbol here", "UTF-8 Symbol": "symbol here", "Field": "scontrol field", "Value": "field value", "Message": "display message at bottom of output"}}
+
+This will annotate specific nodes with something like (assuming ascii symbol = **):
+
+NodeName1 [####   ] x% **
+NodeName2 [####   ] x%
+...
+** Node annotation message
+
+If annotations are not desired, set node_annotations = None
+'''
 global node_annotations
 node_annotations = {"HiPri": {"Ascii Symbol":"*","UTF-8 Symbol":u'\u271A',"Field":"Partitions","Value":"windfall,high_priority","Message":"Buy-in nodes. Only accept high_priority and windfall jobs"},
-                    #"Test": {"Ascii Symbol":"+","UTF-8 Symbol":u'\u25A3', "Field": "Gres","Value": "gpu:kepler:1", "Message":"This is a test"},
-                    #"standard" : {"Ascii Symbol": "++","UTF-8 Symbol":"++", "Field":"Partitions","Value":"windfall,standard","Message":"Normal Partitions"}
                     }
 
+'''
+Node Types:
+----------------
+node_types allows you to separate nodes into clusters that are displayed together. It relies on finding 
+a specified value in a "scontrol show nodes --all" field. 
 
-# node_types allows you to separate nodes into clusters that are displayed together. It relies on finding 
-# a specified value in a "scontrol show nodes --all" field. 
+These groupings also have a priority value associated with them. This priority controls how to sort nodes 
+that have more than one node type. For example,
+if a node was both a GPU node and buy-in, the priority value would determine whether that node was displayed in
+the buy-in group or the gpu group. Higher priority values indicate higher group priority. In this case, based
+on the configuration below, because buy-in nodes have priority 4 > gpu nodes priority 2, this node would be
+displayed in the buy-in group. 
 
-# These groupings also have a priority value associated with them. This priority controls how to sort nodes 
-# that have more than one node type. For example,
-# if a node was both a GPU node and buy-in, the priority value would determine whether that node was displayed in
-# the buy-in group or the gpu group. Higher priority values indicate higher group priority. In this case, based
-# on the configuration below, because buy-in nodes have priority 4 > gpu nodes priority 2, this node would be
-# displayed in the buy-in group. 
-
-# --> The first entry in the dictionary below ("Standard Nodes") should be kept, it is the default grouping for
-# all nodes. Additionally, the Field and Value entries should be kept None. However, the Name can be changed
-# which is what's displayed. GPU Nodes should also be kept since this is used for display purposes. The name 
-# Can be changed if desired.
+--> The first entry in the dictionary below ("Standard Nodes") should be kept, it is the default grouping for
+all nodes. Additionally, the Field and Value entries should be kept None. However, the Name can be changed
+which is what's displayed. GPU Nodes should also be kept since this is used for display purposes. The name 
+Can be changed if desired.
+'''
 global node_types
 node_types = {"Standard Nodes"    : {"Name" :"Standard Nodes"    ,"Field": None                  ,"Value":None                    ,"Priority":0},
               #"Buy-In Nodes"      : {"Name" : "Buy-In Nodes"     ,"Field":"Partitions"           ,"Value":"windfall,high_priority","Priority":4},
@@ -75,21 +83,18 @@ node_types = {"Standard Nodes"    : {"Name" :"Standard Nodes"    ,"Field": None 
               "High Memory Nodes" : {"Name" : "High Memory Nodes","Field":"AvailableFeatures"    ,"Value":"hi_mem"                ,"Priority":3}
               }
 
-# This was built into the script for University of Arizona's systems. We have nodes with 96 CPUs
-# where two are reserved for system use. This leaves 94 available for users to schedule. If there are
-# machines where fewer CPUs are schedulable than exist on the system, this variable's format should be:
-# cpu_limits = {physical_cpus1:schedulable_cpus1,physical_cpus2:schedulable_cpus2,...}
-# if this is not applicable, set cpu_limits to None.
+
+'''
+CPU Limits:
+----------------
+This was built into the script for University of Arizona's systems. We have nodes with 96 CPUs
+where two are reserved for system use. This leaves 94 available for users to schedule. If there are
+machines where fewer CPUs are schedulable than exist on the system, this variable's format should be:
+cpu_limits = {physical_cpus1:schedulable_cpus1,physical_cpus2:schedulable_cpus2,...}
+if this is not applicable, set cpu_limits to None.
+'''
 global cpu_limits
 cpu_limits = {"96":"94"}
-
-
-
-
-
-
-
-
 
 
 
@@ -108,7 +113,7 @@ Contains colors and utf-8/ascii characters that are used in the output
 class VisOptions:
     def __init__(self,seed, use_ascii):
         
-        # Seed option determines if display colors are rapndomized
+        # Seed option determines if display colors are randomized
         self.seed = seed
         self.use_ascii = use_ascii
         self.width = 0
@@ -116,7 +121,7 @@ class VisOptions:
         self.max_gpus=0
         self.valid_annotations = set({})
 
-    # The different color options are for highlighting resources being used by a 
+    # The different color options are for highlighting resources used by a 
     # group/user/partition, if requested. Additionally, nodes in the DOWN/DRAIN
     # state will be highlighted with the DOWNCOLOR.
     COLOR="\033[38;5;%dm"
@@ -150,6 +155,9 @@ class VisOptions:
 '''
 ------------------------------------------------------------------------------------------
                                      Job Options
+Parses flags. Flags determine what's displayed and how it's displayed. Recently added 
+scale/width option. Some flags are mutually exclusive. These are described when running the
+program using --help. 
 '''
 class Args:
     def __init__(self,argv):
@@ -259,7 +267,7 @@ Slurm tries to make for nice output by representing nodes in formats like:
 cpu1,cpu31,cpu[45-46,48,51-55],cpu[57-58],cpu[59-60,63],cpu[70,74]...
 which is a bummer to parse. These functions are dedicated to untangling this.
 As far as I'm aware, there isn't a way to print node lists in long form with
-scontrol. If I'm wrong on this, let me know.
+scontrol. If I'm wrong on this, *please* let me know.
 
 '''
 
@@ -662,16 +670,16 @@ Create a formatted string for printing output.
 '''
 def format_string(down,gpu,max_cpus,DOWNCOLOR,ENDCOLOR,max_gpus=None):
     if down == True and gpu == False:
-        formatting_string = DOWNCOLOR + "{0:7}:{1:"+str(max_cpus+2)+"}"+DOWNCOLOR+" {2:>5} {3:6}[{4:1}] {5:2}"+ENDCOLOR
+        formatting_string = DOWNCOLOR + "{0:9}:{1:"+str(max_cpus+2)+"}"+DOWNCOLOR+" {2:>5} {3:6}[{4:1}] {5:2}"+ENDCOLOR
     elif down == False and gpu == False:
         # Expecting input (node name, usage bar, percentage)
-        formatting_string = formatting_string ="{0:7}:{1:"+str(max_cpus+2)+"} {2:*>5} {3:2}"
+        formatting_string = formatting_string ="{0:9}:{1:"+str(max_cpus+2)+"} {2:*>5} {3:2}"
     elif down == True and gpu == True:
         # Expecting input (node name, usage bar, percentage, GPU usage bar, GPU percentage, state, reason index)
-        formatting_string = DOWNCOLOR+"{0:7}:{1:"+str(max_cpus+2)+"}"+DOWNCOLOR+" {2:>5} {3:"+str(max_gpus+2)+"} "+DOWNCOLOR+"{4:>5} {5:6}[{6:1}] {7:2}" + ENDCOLOR
+        formatting_string = DOWNCOLOR+"{0:9}:{1:"+str(max_cpus+2)+"}"+DOWNCOLOR+" {2:>5} {3:"+str(max_gpus+2)+"} "+DOWNCOLOR+"{4:>5} {5:6}[{6:1}] {7:2}" + ENDCOLOR
     elif down == False and gpu == True:
         # Expecting input (node name, usage bar, percentage, GPU usage bar, GPU percentage)
-        formatting_string = "{0:7}:{1:"+str(max_cpus+2)+"} {2:>6} {3:"+str(int(max_gpus)+3)+"} {4:<6} {5:2}"
+        formatting_string = "{0:9}:{1:"+str(max_cpus+2)+"} {2:>6} {3:"+str(int(max_gpus)+3)+"} {4:<6} {5:2}"
     return formatting_string
 
 
@@ -805,7 +813,6 @@ def print_header(width,job_options):
 
 '''
 ******************************************************************************************
-CHECK THAT ALL THE CONSTANTS ARE NEEDED
 ------------------------------------------------------------------------------------------
                                 Display Node Type
 '''                                
@@ -918,7 +925,6 @@ def display_node_type(node_specs,ntype,nval,job_options,vis):
 
 '''
 ******************************************************************************************
-CHECK THAT ALL CONSTANTS ARE NEEDED. 
 ------------------------------------------------------------------------------------------
                                       Display
 Goes through the whole process of sorting data, highlighting, checking user options, 
@@ -939,19 +945,14 @@ def display(node_specs,job_options,vis):
         node_specs=scale(node_specs,job_options,vis)
         vis.utf8_char=vis.scale_utf8_char
 
-    
     # We sort nodes based on CPU usage. This makes it so when all nodes are displayed, 
     # CPU usage will be shown in decending order
     sorted_specs, max_cpus, max_gpus = sort_node_types(node_specs)
-    
-
     
     # Added new submodule to print the header as its own bit. Attempting to make this whole
     # display section less redundant/less of a mess.
     width = max_cpus + max_gpus + 30
 
-
-    
     vis.width = width
     vis.max_cpus = max_cpus
     vis.max_gpus = max_gpus
@@ -968,8 +969,6 @@ def display(node_specs,job_options,vis):
         for i,j in node_specs["REASONS"].items():
             print("[%s] %s"%(j,i))
         print("\n* Nodes in the DRAIN state will wait for all running jobs to complete\nand will not accept new jobs without manual intervention\n")
-
-
     
     if len(vis.valid_annotations) != 0:
         print("\nNode Annotations"+"\n"+"="*width)
@@ -983,11 +982,6 @@ def display(node_specs,job_options,vis):
     return
     
     
-
-
-
-
-
 
 '''
 ******************************************************************************************
