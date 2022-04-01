@@ -16,6 +16,9 @@ This script is designed to print a visualization of a SLURM cluster's resource u
 This script has been tested on:
     - University of Arizona's HPC systems
     - Bridges2
+    - Expanse
+    - Kyric
+    - Stampede2
 
 '''
 
