@@ -116,7 +116,7 @@ def user_jobs(user,days):
         usage(1)
     try:
         acct = subprocess.run(['sacct','-u',user,'-S',start_date,'-P','--format=JobID,Start,User,JobName%11,Partition,Account,State,ExitCode'],stdout=subprocess.PIPE)
-        acct_out = acct.stdout.decode("utf-8").split('\n')
+        acct_out = acct.stdout.decode("utf-8",'ignore').split('\n')
         header = acct_out[0].split("|")
         user_data=[header]
         for entry in acct_out[1:-1]:
@@ -169,7 +169,7 @@ if __name__ == '__main__':
     days = args(sys.argv[1:])
     user_netid = getpass.getuser()
     # It would be really weird if the active user weren't an active user, but what do I know?
-    getent_user = subprocess.Popen(["getent passwd %s"%user_netid],stdout=subprocess.PIPE,shell=True).communicate()[0].decode("utf-8")
+    getent_user = subprocess.Popen(["getent passwd %s"%user_netid],stdout=subprocess.PIPE,shell=True).communicate()[0].decode("utf-8",'ignore')
     if getent_user == "":
         error_message("Oops! User NetID invalid.")
         sys.exit(1)

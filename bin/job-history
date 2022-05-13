@@ -34,7 +34,7 @@ def job_is_running(JobID):
         print("Oops! Something has gone wrong. Maybe SLURM is not available on this cluster?")
         sys.exit(1)
     out,err = p.communicate()
-    out = out.decode('utf-8')
+    out = out.decode('utf-8','ignore')
     if out != "":
         return True
     else:
@@ -56,7 +56,7 @@ def running_job_data(JobID):
         print("Oops! Something has gone wrong. Maybe SLURM is not available on this cluster?")
         sys.exit(1)
     out,err = p.communicate()
-    out = out.decode('utf-8')
+    out = out.decode('utf-8','ignore')
     job_data = {}
     for i in out.split(" "):
         try:
@@ -80,7 +80,7 @@ def sacct_job_data(JobID):
         print("Oops! Something has gone wrong. Maybe SLURM is not available on this cluster?")
         sys.exit(1)    
     out,err = p.communicate()
-    out = out.decode('utf-8')
+    out = out.decode('utf-8','ignore')
     if out == "":
         print("Oops! Something's gone wrong. Are you sure the JobID you entered is valid?")
         usage(1)
@@ -127,7 +127,7 @@ def display(sacct_dict,running_dict):
     data_overview = [("JobName","Job Name"),("JobID","Job ID"),("JobIDRaw","Raw JobID"),("State","State"),("ExitCode","Exit Code"),("DerivedExitCode","Derived Exit Code"),("MailUser","User Email"),("MailType","Mail Type"),("Dependency","Dependency")]
     data_accounting = [("User","User"),("UID","UID"),("Account","Account"),("Group","Group"),("GID","Group ID"),("Partition","Partition"),("QOS","QOS"),("QOSRAW","Raw QOS"),("Priority","Priority")]
     data_time = [("Timelimit","Time Limit"),("TimelimitRaw","Time Limit (Raw)"),("Elapsed","Time Elapsed"),("ElapsedRaw","Time Elapsed (raw)"),("CPUTime","CPU Time"),("CPUTimeRAW","CPU Time (raw)"),("Submit","Submit Time"),("Eligible","Eligible Time"),("Start","Start Time"),("PreemptEligibleTime","Preempt Eligible Time"),("PreemptTime","Preempt Time"),("SuspendTime","Suspend Time"),("LastSchedEval","Last Scheduling Eval"),("Restarts","Restarts"),("EndTime","Scheduled End Time"),("End","End Time"),("Deadline","Deadline")]
-    data_resources = [("Cluster","Cluster"),("ReqTRES","Requsted Resources"),("ReqMem","Requested RAM"),("ReqCPUS","Requested CPUs"),("ReqNodes","Requested Nodes"),("AllocTRES","Allocated Resources"),("MinMemoryCPU","Allocated RAM/CPU"),("NNodes","Allocated Nodes"),("NumTasks","Allocated Tasks"),("NCPUS","Allocated CPUs"),("CPUs/Task","Allocated CPUs/Task"),("NodeList","Node List"),("ReqNodeList","Required Node List"),("ExcNodeList","Excluded Node List"),("BatchHost","Batch Host"),("OverSubscribe","Oversubscribe")]
+    data_resources = [("Cluster","Cluster"),("ReqTRES","Requested Resources"),("ReqMem","Requested RAM"),("ReqCPUS","Requested CPUs"),("ReqNodes","Requested Nodes"),("AllocTRES","Allocated Resources"),("MinMemoryCPU","Allocated RAM/CPU"),("NNodes","Allocated Nodes"),("NumTasks","Allocated Tasks"),("NCPUS","Allocated CPUs"),("CPUs/Task","Allocated CPUs/Task"),("NodeList","Node List"),("ReqNodeList","Required Node List"),("ExcNodeList","Excluded Node List"),("BatchHost","Batch Host"),("OverSubscribe","Oversubscribe")]
     data_io = [("Command","Command"),("WorkDir","Working Directory"),("StdErr","StdErr"),("StdOut","StdOut"),("StdIn","StdIn")]
     data_comments = [("AdminComment","Admin Comment"),("SystemComment","System Comment"),("Comment","Comment"),("Reason","Reason Not Running"),("Licenses","Licenses"),("Network","Network"),("Contiguous","Contiguous"),("Features","Features"),("Flags","Flags"),("Nice","Nice"),("BatchFlag","Batch Flag"),("Requeue","Requeue"),("Reboot","Reboot"),("DBIndex","DBIndex"),("AllocNode:Sid","AllocNode:Sid")]
    

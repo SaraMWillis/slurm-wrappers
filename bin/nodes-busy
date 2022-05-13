@@ -222,10 +222,10 @@ Get valid partitions available on the cluster
 def get_partitions():
     p = subprocess.Popen(['sinfo --federation --format=%R --noheader'],stdout=subprocess.PIPE,shell=True)
     out,err = p.communicate()
-    if err != None and err.decode("utf-8") != "":
+    if err != None and err.decode("utf-8",'ignore') != "":
         print("Oops, something has gone wrong! Error occured running:\n\t'sinfo --federation --format=%R --noheader'\nThis could be a problem with your SLURM setup. Exiting.")
         sys.exit(1)
-    output = out.decode('utf-8').split("\n")
+    output = out.decode('utf-8','ignore').split("\n")
     partitions = [i for i in output if i != '']
     return partitions
 
@@ -362,12 +362,12 @@ def get_scontrol_job_data(target_job = None):
         p = subprocess.Popen(['scontrol show job -d --oneliner '+target_job+' | grep "JobState=RUNNING"'],stdout=subprocess.PIPE,stderr=subprocess.PIPE, shell=True)
     out,err = p.communicate()
 
-    if err != None and err.decode("utf-8") != "":
+    if err != None and err.decode("utf-8",'ignore') != "":
         print("Oops, something has gone wrong!\nIf you've included a Job ID, check that it's valid and try again.")
         sys.exit(1)
     
     # Split up space-delimited output into a job dictionary 
-    output = out.decode('utf-8').split("\n")
+    output = out.decode('utf-8','ignore').split("\n")
     for job in output:
         details = job.split(' ')
         for i in details:
@@ -457,7 +457,7 @@ def get_scontrol_node_data():
     # Node information is collected from scontrol and arranged into a dictionary.            
     p = subprocess.Popen(['scontrol show nodes --all --oneliner'],stdout=subprocess.PIPE,shell=True)
     out,err = p.communicate()
-    node_output = out.decode('utf-8').split("\n")
+    node_output = out.decode('utf-8','ignore').split("\n")
     for i in node_output:
         node_specs = i.split(" ")
         for j in node_specs:
@@ -548,7 +548,7 @@ def get_user_jobids(username,group):
     elif group != None:
         p = subprocess.Popen(['squeue --noheader --states=RUNNING -o %A --account '+group],stdout=subprocess.PIPE, shell=True)
     out,err = p.communicate()
-    user_jobs = out.decode('utf-8').split("\n")
+    user_jobs = out.decode('utf-8','ignore').split("\n")
     for job in user_jobs:
         formatted_job = [i for i in job.split(" ") if i != ""]
         if len(formatted_job) != 0:
@@ -1149,7 +1149,7 @@ if __name__ == '__main__':
     if user != None:
         p = subprocess.Popen(['getent passwd '+user],stdout=subprocess.PIPE, shell=True)
         out,err = p.communicate()
-        if out.decode('utf-8') == '':
+        if out.decode('utf-8','ignore') == '':
             print("\nOops! User not found. Check your options and try again.\n")
             usage(1)
             
@@ -1157,7 +1157,7 @@ if __name__ == '__main__':
     if group != None:
         p = subprocess.Popen(['getent group '+group],stdout=subprocess.PIPE, shell=True)
         out,err = p.communicate()
-        if out.decode('utf-8') == '':
+        if out.decode('utf-8','ignore') == '':
             print("\nOops! Group not found. Check your options and try again.\n")
             usage(1)
           
