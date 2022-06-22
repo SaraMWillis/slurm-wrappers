@@ -7,7 +7,7 @@ import getopt, subprocess, sys, os, getpass
 from datetime import datetime, timedelta
 
 '''
-Usage: past-jobs [-h] [-d n|--days=n]
+Usage: past-jobs [-h] [-d n|--days=n] [-u USER|--user=USER]
 
 Retrieves a user's jobs submitted within the last n days. If no timeframe is specified,
 defaults to current day.
@@ -48,7 +48,7 @@ def usage(ExitCode):
     print("Command: past-jobs")
     print("Retrieves user's past job IDs. Defaults to jobs submitted on current day.")
     print("If -d N included, where N is an integer, retrieves jobs run in last N days\n")
-    print("Usage: past-jobs [-h|--help] [-d N|--days=N]")
+    print("Usage: past-jobs [-h|--help] [-d N|--days=N] [-u USER|--user=USER")
     print("Example: past-jobs -d 2\n")
     print("------------------------------------------------------------------------------")
     sys.exit(ExitCode)
@@ -57,14 +57,15 @@ def usage(ExitCode):
 '''
 ------------------------------------------------------------------------------------------
                                      Job Options
-Options include -h|--help,-d N|--days=N
+Options include -h|--help,-d N|--days=N|--user=USER
 
 Omitted option to select custom user. Could change at some point. 
 '''
 def args(argv):
     d=0
+    u=""
     try:
-        opts, args = getopt.getopt(argv, "hd:",["help","days="])
+        opts, args = getopt.getopt(argv, "hd:u:",["help","days=","user="])
         if len(opts) ==0:
             pass
     except getopt.GetoptError:
@@ -83,6 +84,15 @@ def args(argv):
                     d = int(d)
                 except ValueError:
                     error_message("\nError: Days must be an integer")
+                    print("\nDays: " + d)
+                    usage(1)
+                    sys.exit(1)
+            if opt in ("-u","--user"):
+                u = arg
+                try:
+                    u = str(u)
+                except ValueError:
+                    error_message("\nError: User must be a string")
                     usage(1)
                     sys.exit(1)
     except UnboundLocalError:
@@ -91,7 +101,7 @@ def args(argv):
     if d < 0:
         error_message("\nMissing technology necessary to retrieve data from the future. Please choose a day value >=0")
         usage(1)
-    return d
+    return d, u
 
 
 '''
@@ -166,8 +176,9 @@ def display_past_jobs(user,user_data,days):
 '''
 
 if __name__ == '__main__':
-    days = args(sys.argv[1:])
-    user_netid = getpass.getuser()
+    days, user_netid = args(sys.argv[1:])
+    if user_netid == "":
+        user_netid = getpass.getuser()
     # It would be really weird if the active user weren't an active user, but what do I know?
     getent_user = subprocess.Popen(["getent passwd %s"%user_netid],stdout=subprocess.PIPE,shell=True).communicate()[0].decode("utf-8",'ignore')
     if getent_user == "":
