@@ -3,6 +3,7 @@
 > **⚠ Warning **  
 > These scripts were developed for the University of Arizona's HPC center so some pieces may be specific to our setup. This is being worked on to make the scripts more customizable/portable.
 
+> This branch will be changing soon. In the interests of simplicity/portability, I created the original scripts to be standalone. In the interests of maintainability, I'm working on creating libraries and config scripts
 
  
 
