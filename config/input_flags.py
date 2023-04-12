@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import getopt, sys
+import getopt, sys, shutil
 from display.usage import usage
 from display._version import *
 
@@ -16,12 +16,12 @@ class Args:
         ERRORCOLOR="\033[0;31m"
         ENDCOLOR = "\033[0m"
         self.argv = argv
-        
+        self.TERMINAL_WIDTH=shutil.get_terminal_size().columns
         self.partition=self.user=self.group=self.node=None
-        self.all_nodes=self.color_random=self.use_ascii=self.scale=False
+        self.all_nodes=self.color_random=self.use_ascii=self.scale=self.summary=self.text=False
         self.scale_ratio=1
         try:
-            opts,args = getopt.getopt(argv, "harvsw:p:u:n:g:",["help","all","version","randomize","ascii","partition=","user=","group=","node=","scale","width="])
+            opts,args = getopt.getopt(argv, "harvtsw:p:u:n:g:",["help","all","version","randomize","ascii","summary","text","partition=","user=","group=","node=","scale","width="])
             if len(opts) ==0:
                 return
         except getopt.GetoptError:
@@ -52,7 +52,13 @@ class Args:
                 self.use_ascii=True
             elif opt in ("-s","--scale"):
                 self.scale = True
-                self.scaled_width=70
+                self.scaled_width=self.TERMINAL_WIDTH - 50
+                if self.scaled_width < 10:
+                    self.scaled_width = 10
+            elif opt in ("-t","--text"):
+                self.text = True
+            elif opt in ("--summary"):
+                self.summary = True
             elif opt in ("-w","--width"):
                 try:
                     self.scale = True
