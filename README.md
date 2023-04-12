@@ -1,10 +1,6 @@
 # SLURM Wrappers
 
-> **⚠ Warning **  
-> These scripts were developed for the University of Arizona's HPC center so some pieces may be specific to our setup. This is being worked on to make the scripts more customizable/portable.
-
-
- 
+> Updated on 04/12/2023 to have a more modular setup. More updates coming.
 
 
 # Job Information
@@ -96,32 +92,6 @@ Flags                : SchedMain
 
 
 # System Usage
-## ```cluster-busy```
-Developed for the HPC systems at the University of Arizona. This script allows users to query the average usage of each cluster. A highlighting option is available to view resource usage by partition using ```cluster-busy --partition=<partition_name>```. Example output for a single cluster:
-```
-====================================================================================================
-                                                Puma                                                
-====================================================================================================
-
-
-                                             Resources                                              
-____________________________________________________________________________________________________
-Node Type            | Node Count | CPUs Total | CPUs Used | % Used | GPUs Total | GPUs Used | % Used
-____________________________________________________________________________________________________
-Standard             | 248        | 23808      | 22307     | 94.00% | N/A        | N/A       | N/A%  
-GPU                  | 9          | 864        | 717       | 83.00% | 33         | 19        | 58.00%
-HiMem                | 4          | 384        | 365       | 95.00% | N/A        | N/A       | N/A%  
-
-                                             CPU Usage                                              
-____________________________________________________________________________________________________
-Standard:  [███████████████████████████████████████████████████████████████████████████░░░░░] (94.0%)
-GPU     :  [██████████████████████████████████████████████████████████████████░░░░░░░░░░░░░░] (83.0%)
-HiMem   :  [████████████████████████████████████████████████████████████████████████████░░░░] (95.0%)
-
-                                             GPU Usage                                              
-____________________________________________________________________________________________________
-GPUs    :  [██████████████████████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] (58.0%)
-```
 
 ## ```nodes-busy```
 Developed for the HPC systems at University of Arizona. 
@@ -136,119 +106,11 @@ Developed for the HPC systems at University of Arizona.
 https://user-images.githubusercontent.com/24305667/161330606-3f122a90-232a-4f9b-b614-63245204d263.mp4
 
 ### User Customization
-It's now possible to customize this script to add node annotations, change the groupings/naming of node types, and add limits to the CPU display.
-
-The header of the script describes how to do this:
 
 ```
-Need to make some adjustments? Options exist here to add annotations to nodes
-
-# Options described below with instructions
-
-'''
-Node Annotations:
-----------------
-Add annotations next to a specific node type. E.g., UArizona's system adds an annotation for 
-buy-in nodes. The format for this should be a dictionary with the following entries:
-
-{AnnotationDescription: {"Ascii Symbol": "symbol here", "UTF-8 Symbol": "symbol here", "Field": "scontrol field", "Value": "field value", "Message": "display message at bottom of output"}}
-
-This will annotate specific nodes with something like (assuming ascii symbol = **):
-
-NodeName1 [####   ] x% **
-NodeName2 [####   ] x%
-...
-** Node annotation message
-
-If annotations are not desired, set node_annotations = None
-'''
-global node_annotations
-node_annotations = {"HiPri": {"Ascii Symbol":"*","UTF-8 Symbol":u'\u271A',"Field":"Partitions","Value":"windfall,high_priority","Message":"Buy-in nodes. Only accept high_priority and windfall jobs"},
-                    }
-'''
-Node Types:
-----------------
-node_types allows you to separate nodes into clusters that are displayed together. It relies on finding 
-a specified value in a "scontrol show nodes --all" field. 
-
-These groupings also have a priority value associated with them. This priority controls how to sort nodes 
-that have more than one node type. For example,
-if a node was both a GPU node and buy-in, the priority value would determine whether that node was displayed in
-the buy-in group or the gpu group. Higher priority values indicate higher group priority. In this case, based
-on the configuration below, because buy-in nodes have priority 4 > gpu nodes priority 2, this node would be
-displayed in the buy-in group. 
-
---> The first entry in the dictionary below ("Standard Nodes") should be kept, it is the default grouping for
-all nodes. Additionally, the Field and Value entries should be kept None. However, the Name can be changed
-which is what's displayed. GPU Nodes should also be kept since this is used for display purposes. The name 
-Can be changed if desired.
-'''
-global node_types
-node_types = {"Standard Nodes"    : {"Name" :"Standard Nodes"    ,"Field": None                  ,"Value":None                    ,"Priority":0},
-              "GPU Nodes"         : {"Name" : "GPU Nodes"        ,"Field":["AllocTRES","CfgTRES"],"Value":"gpu"                   ,"Priority":2},
-              "High Memory Nodes" : {"Name" : "High Memory Nodes","Field":"AvailableFeatures"    ,"Value":"hi_mem"                ,"Priority":3}
-              }
-
-'''
-CPU Limits:
-----------------
-This was built into the script for University of Arizona's systems. We have nodes with 96 CPUs
-where two are reserved for system use. This leaves 94 available for users to schedule. If there are
-machines where fewer CPUs are schedulable than exist on the system, this variable's format should be:
-cpu_limits = {physical_cpus1:schedulable_cpus1,physical_cpus2:schedulable_cpus2,...}
-if this is not applicable, set cpu_limits to None.
-'''
-global cpu_limits
-cpu_limits = {"96":"94"}
-'''
-```
 
 
 
-
-
-
-## ```system-busy```
-Provides a text-based summary of a cluster's usage.
-```
-(puma) [sarawillis@wentletrap nodes-busy-devel]$ system-busy
-
-Tue Dec 07, 11:44:30 AM (MST) 2021
-
-Total Number of Nodes      :        261
-Total Number of Idle Nodes :         23
-
-Total Number of Jobs       :       1227
-
-Total Number of CPUs       :      25056
-CPUs in Use                :      19377
-Percent Utilization        :     77.33%
-
-Standard Nodes
-=================
-Total Standard Nodes       :        248
-Total Standard CPUs        :      23808
-Standard CPUs In Use       :      18562
-Percent Utilization        :     77.97%
-
-GPU Nodes
-=================
-Total GPU Nodes            :          9
-Total GPU CPUs             :        864
-GPU CPUs In Use            :        479
-Percent Utilization        :     55.44%
-
-High Memory Nodes
-=================
-Total High Mem Nodes       :          4
-Total High Mem CPUs        :        384
-High Mem CPUs In Use       :        336
-Percent Utilization        :      87.5%
-
-Idle Nodes:
-=================
-r1u10n1,r1u17n1,r1u33n1,r1u33n2,r1u34n1,r1u34n2,r1u35n1,r1u35n2,r2u16n1,r2u30n2,r2u34n1,r3u06n2,r3u13n2,r3u14n1,r3u16n1,r3u17n1,r3u26n1,r3u26n2,r3u27n2,r3u31n2,r3u33n2,r3u35n1,r4u40n1
-```
 
 
 
