@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+'''
+Author : Sara Willis, University of Arizona
+Date   : April 11, 2023
+'''
+
+import subprocess, sys, os, random, datetime, getopt, math, re, yaml
+
+from config.visualization import *
+from config.input_flags import *
+
+from display.usage import usage
+from display.system_view import system_display
+from display.single_node import single_node_display
+
+from slurm.squeue import get_user_jobids
+from slurm.scontrol import get_scontrol_job_data, get_scontrol_node_data
+from slurm.sinfo import get_partitions
+
+from formatting.sorting import sort_node_types
+from formatting.slurm_output_reformatting import merge
+
+    
+    
+'''
+------------------------------------------------------------------------------------------
+##########################################################################################
+                                    Program Executes Below                                
+##########################################################################################
+------------------------------------------------------------------------------------------
+'''
+
+if __name__ == '__main__':
+    
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    yml_file = os.path.join(script_dir,"config/system_customization.yml")
+    with open(yml_file, 'r') as file:
+        node_specifications = yaml.safe_load(file)
+
+
+
+    # Made job options a class instead of a function so it wouldn't have to be batted around 
+    # like a beach ball
+    job_options = Args(sys.argv[1:])
+
+    user      = job_options.user
+    group     = job_options.group
+    partition = job_options.partition
+    
+    # Check if valid user
+    if user != None:
+        p = subprocess.Popen(['getent passwd '+user],stdout=subprocess.PIPE, shell=True)
+        out,err = p.communicate()
+        if out.decode('utf-8','ignore') == '':
+            print("\nOops! User not found. Check your options and try again.\n")
+            usage(1)
+            
+    # Check if valid group
+    if group != None:
+        p = subprocess.Popen(['getent group '+group],stdout=subprocess.PIPE, shell=True)
+        out,err = p.communicate()
+        if out.decode('utf-8','ignore') == '':
+            print("\nOops! Group not found. Check your options and try again.\n")
+            usage(1)
+          
+    # Check if valid partition.         
+    valid_partitions = get_partitions()
+    if partition != None and partition not in valid_partitions:
+        print("\nOops! Partition not recognized.\n")
+        usage(1)
+        
+    # If user wants to get random colors, a random seed is set
+    if job_options.color_random != False:
+        seed = random.randint(1,1000)
+    else:
+        seed = None
+
+    # Pull job data using "scontrol show jobs --all"
+    job_data = get_scontrol_job_data()
+    
+    #print(job_data)
+    #sys.exit(0)
+    
+    # Pull job data using "scontrol show nodes --all"
+    node_data = get_scontrol_node_data(node_specifications)
+    
+    # Merge the two dictionaries above to create one 
+    merged = merge(job_data, node_data)
+
+    # Set vis options
+    vis = VisOptions(seed,job_options.use_ascii)
+    
+    # We won't need node_data or job_data again since everything's in merged
+    del node_data, job_data
+    
+    if job_options.node == None:
+        system_display(merged,job_options,vis,node_specifications)
+        
+    else:
+        single_node_display(job_options.node,merged,job_options.use_ascii,vis)
+

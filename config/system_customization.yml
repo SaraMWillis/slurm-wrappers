@@ -1,0 +1,27 @@
+node_types: 
+  "Standard Nodes":
+    Name: "Standard Nodes"
+    Field: None
+    Value: None
+    Priority: 0
+  "GPU Nodes": 
+    Name: "GPU Nodes"
+    Field: 
+      - AllocTRES
+      - CfgTRES
+    Value: gpu
+    Priority: 1
+  "High Memory Nodes":
+    Name: "High Memory Nodes"
+    Field: AvailableFeatures
+    Value: hi_mem
+    Priority: 2
+cpu_limits:
+  96: 94
+node_annotations:
+  "HiPri":
+    "Ascii Symbol": "*"
+    "UTF-8 Symbol": "\u271A"
+    Field: "Partitions"
+    Value: "windfall,high_priority"
+    Message: "Buy-in nodes. Only accept high_priority and windfall jobs"
