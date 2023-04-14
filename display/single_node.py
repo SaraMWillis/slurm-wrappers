@@ -12,7 +12,9 @@ count, GPU count (if applicable), job partition, job end time, and number of job
 interrupts. 
 '''
 
-def single_node_display(node,node_dictionary,use_ascii,vis):
+def single_node_display(node,node_dictionary,use_ascii,vis,node_specifications):
+    node_annotations = node_specifications['node_annotations']
+
     # First, we'll check that the node name actually exists on the system
     if node not in node_dictionary.keys():
         print("Oops! Node not found on cluster. Check your input and try again.")

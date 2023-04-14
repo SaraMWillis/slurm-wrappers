@@ -16,12 +16,24 @@ class Args:
         ERRORCOLOR="\033[0;31m"
         ENDCOLOR = "\033[0m"
         self.argv = argv
-        self.TERMINAL_WIDTH=shutil.get_terminal_size().columns
+        
         self.partition=self.user=self.group=self.node=None
-        self.all_nodes=self.color_random=self.use_ascii=self.scale=self.summary=self.text=False
+        self.all_nodes=self.color_random=self.use_ascii=False
+        
+        # Default behavior is to display a visual of all the nodes on the system. 
+        self.display_all = True
+        self.single_node = False
+        self.text        = False
+        self.summary     = False
+        
+        self.TERMINAL_WIDTH=shutil.get_terminal_size().columns
+        self.scale = True
         self.scale_ratio=1
+        self.scaled_width=self.TERMINAL_WIDTH - 50
+        if self.scaled_width < 10:
+            self.scaled_width = 10
         try:
-            opts,args = getopt.getopt(argv, "harvtsw:p:u:n:g:",["help","all","version","randomize","ascii","summary","text","partition=","user=","group=","node=","scale","width="])
+            opts,args = getopt.getopt(argv, "harvtsw:p:u:n:g:",["help","all","version","randomize","ascii","summary","text","partition=","user=","group=","node=","no-scale","width="])
             if len(opts) ==0:
                 return
         except getopt.GetoptError:
@@ -41,6 +53,9 @@ class Args:
             elif opt in ("-u","--user"):
                 self.user = arg.lower() 
             elif opt in ("-n","--node"):
+                self.single_node = True
+                self.display_all = False
+                self.scale=False
                 self.node = arg.lower()
             elif opt in ("-a","--all"):
                 self.all_nodes = True
@@ -50,15 +65,14 @@ class Args:
                 self.color_random = True
             elif opt == "--ascii":
                 self.use_ascii=True
-            elif opt in ("-s","--scale"):
-                self.scale = True
-                self.scaled_width=self.TERMINAL_WIDTH - 50
-                if self.scaled_width < 10:
-                    self.scaled_width = 10
+            elif opt in ("-s","--no-scale"):
+                self.scale = False
             elif opt in ("-t","--text"):
                 self.text = True
+                self.display_all = False
             elif opt in ("--summary"):
                 self.summary = True
+                self.display_all = False
             elif opt in ("-w","--width"):
                 try:
                     self.scale = True
@@ -71,6 +85,9 @@ class Args:
                 usage(1)
         if [self.partition,self.user,self.group,self.node].count(None) < 3:
             print(ERRORCOLOR+"Too many options specified"+ENDCOLOR)
+            usage(1)
+        if [self.display_all, self.single_node, self.text, self.summary].count(True) > 1:
+            print(ERRORCOLOR + "Too many options specified."+ ENDCOLOR)
             usage(1)
         if self.node != None and self.scale == True:
             print(ERRORCOLOR+"Oops! Options --scale and --node are mutually exclusive. Please include one or the other"+ENDCOLOR)

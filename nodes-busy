@@ -14,6 +14,8 @@ from config.input_flags import *
 from display.usage import usage
 from display.system_view import system_display
 from display.single_node import single_node_display
+from display.text import display_text_summary
+from display.summary import display_system_summary
 
 from slurm.squeue import get_user_jobids
 from slurm.scontrol import get_scontrol_job_data, get_scontrol_node_data
@@ -80,9 +82,6 @@ if __name__ == '__main__':
     # Pull job data using "scontrol show jobs --all"
     job_data = get_scontrol_job_data()
     
-    #print(job_data)
-    #sys.exit(0)
-    
     # Pull job data using "scontrol show nodes --all"
     node_data = get_scontrol_node_data(node_specifications)
     
@@ -95,9 +94,17 @@ if __name__ == '__main__':
     # We won't need node_data or job_data again since everything's in merged
     del node_data, job_data
     
-    if job_options.node == None:
+    # If no 
+    if job_options.display_all == True:
         system_display(merged,job_options,vis,node_specifications)
         
+    elif job_options.single_node == True:
+        single_node_display(job_options.node,merged,job_options.use_ascii,vis,node_specifications)
+        
+    elif job_options.text == True:
+        display_text_summary()
+    elif job_options.summary == True:
+        display_system_summary()
     else:
-        single_node_display(job_options.node,merged,job_options.use_ascii,vis)
+        print("It's unclear how we got here")
 
