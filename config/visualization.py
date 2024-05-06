@@ -14,7 +14,6 @@ class VisOptions:
         # Seed option determines if display colors are randomized
         self.seed = seed
         self.use_ascii = use_ascii
-        self.width = 0
         self.max_cpus= 0
         self.max_gpus=0
         self.valid_annotations = set({})
@@ -33,14 +32,17 @@ class VisOptions:
     ascii_char = '#'
     scale_utf8_char = u'\u2592'
     
+    summary_utf8_char = u'\u2588'
+    summary_utf8_blank = u'\u2592'
+    
     # A range of randomized colors is also generated for color-coding different jobs
     # if the "--node=nodename" option is given. This is generally deterministic, 
-    # unless the --randomize flag is used. 
+    # unless the --random flag is used. 
     def color_cycle(self):
         cycle = [self.COLOR%i for i in range(0,256)]
         if self.seed == None:
             random.seed(110)
         if self.seed != None:
-            random.seed(seed)
+            random.seed(self.seed)
         random.shuffle(cycle)
         return cycle

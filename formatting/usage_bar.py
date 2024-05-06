@@ -1,6 +1,7 @@
 #!/usr/bin/env python3 
 
 import math
+from slurm.squeue import get_user_jobids
 
 '''
 ******************************************************************************************

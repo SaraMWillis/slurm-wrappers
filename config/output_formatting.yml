@@ -1,0 +1,8 @@
+Scaling:
+  "Auto-Scale": False
+  "Max Width": 120
+Color:
+  "Error Color": "\x1B[0;31m"
+  "No Color": "\x1B[0m"
+  
+  

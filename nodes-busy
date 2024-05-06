@@ -9,7 +9,7 @@ Date   : April 11, 2023
 import subprocess, sys, os, random, datetime, getopt, math, re, yaml
 
 from config.visualization import *
-from config.input_flags import *
+from input.input_flags import *
 
 from display.usage import usage
 from display.system_view import system_display
@@ -37,15 +37,17 @@ from formatting.slurm_output_reformatting import merge
 if __name__ == '__main__':
     
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    yml_file = os.path.join(script_dir,"config/system_customization.yml")
-    with open(yml_file, 'r') as file:
-        node_specifications = yaml.safe_load(file)
+    system_custom_file = os.path.join(script_dir,"config/system_customization.yml")
+    with open(system_custom_file, 'r') as file:
+        system_specifications = yaml.safe_load(file)
 
-
-
+    output_formatting_file = os.path.join(script_dir,"config/output_formatting.yml")
+    with open(output_formatting_file, 'r') as file:
+        output_formatting=yaml.safe_load(file)
+        
     # Made job options a class instead of a function so it wouldn't have to be batted around 
     # like a beach ball
-    job_options = Args(sys.argv[1:])
+    job_options = Args(sys.argv[1:],output_formatting)
 
     user      = job_options.user
     group     = job_options.group
@@ -80,31 +82,32 @@ if __name__ == '__main__':
         seed = None
 
     # Pull job data using "scontrol show jobs --all"
-    job_data = get_scontrol_job_data()
+    job_data = get_scontrol_job_data(system_specifications)
     
     # Pull job data using "scontrol show nodes --all"
-    node_data = get_scontrol_node_data(node_specifications)
+    node_data = get_scontrol_node_data(system_specifications)
     
     # Merge the two dictionaries above to create one 
     merged = merge(job_data, node_data)
 
     # Set vis options
     vis = VisOptions(seed,job_options.use_ascii)
+    vis.width = job_options.scaled_width
     
     # We won't need node_data or job_data again since everything's in merged
     del node_data, job_data
-    
-    # If no 
+
     if job_options.display_all == True:
-        system_display(merged,job_options,vis,node_specifications)
+        system_display(merged,job_options,vis,system_specifications)
         
     elif job_options.single_node == True:
-        single_node_display(job_options.node,merged,job_options.use_ascii,vis,node_specifications)
+        single_node_display(job_options.node,merged,job_options.use_ascii,vis,system_specifications)
         
     elif job_options.text == True:
-        display_text_summary()
+        display_text_summary(merged,job_options,vis,system_specifications)
+        
     elif job_options.summary == True:
-        display_system_summary()
+        display_system_summary(merged,job_options,vis,system_specifications)
     else:
         print("It's unclear how we got here")
 

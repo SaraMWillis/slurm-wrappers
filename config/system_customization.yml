@@ -1,21 +1,45 @@
 node_types: 
-  "Standard Nodes":
+  "Standard Nodes": # Required
     Name: "Standard Nodes"
     Field: None
     Value: None
     Priority: 0
-  "GPU Nodes": 
+  "GPU Nodes": # Required
     Name: "GPU Nodes"
-    Field: 
-      - AllocTRES
-      - CfgTRES
+    Field: CfgTRES # The field where GPU count shows up in scontrol show nodes --all
+    GPU Alloc: TresPerNode # The field where GPU count shows up in squeue
+    squeue Field: tres_per_node # The value needed to get GPU info with --Format=foo 
     Value: gpu
     Priority: 1
-  "High Memory Nodes":
+    GPU Values: 
+      "gres:gpu:0": 0
+      "gres:gpu:1": 1
+      "gres:gpu:2": 2
+      "gres:gpu:3": 3
+      "gres:gpu:4": 4
+      "gres:gpu": 1
+      "gres:gpu:pascal": 1
+      "gres:gpu:pascal:1": 1
+      "gres:gpu:pascal:2": 2
+      "gres:gpu:volta": 1
+      "gres:gpu:volta:1": 1
+      "gres:gpu:volta:2": 2
+      "gres:gpu:volta:3": 3
+      "gres:gpu:volta:4": 4
+      "gres:gpu:ampere": 1
+      "gres:gpu:nvidia_a100_80gb_pcie_2g.20gb": 1
+  "High Memory Nodes": # Optional
     Name: "High Memory Nodes"
     Field: AvailableFeatures
     Value: hi_mem
     Priority: 2
+    squeue Field: features
+    squeue Values: 
+        - hi_mem
+
+    
+    
+
 cpu_limits:
   96: 94
 node_annotations:
@@ -25,3 +49,5 @@ node_annotations:
     Field: "Partitions"
     Value: "windfall,high_priority"
     Message: "Buy-in nodes. Only accept high_priority and windfall jobs"
+defaults:
+  "Auto-Scale": False

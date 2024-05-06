@@ -10,7 +10,7 @@ Uses "scontrol show job -d --oneliner" to grab detailed data on every job runnin
 cluster. Specs are pulled from these to determine the number of GPUs, CPUs, etc. reserved. 
 Also pulls the job queue for the --partition option.
 '''
-def get_scontrol_job_data(target_job = None):
+def get_scontrol_job_data(system_specifications,target_job = None):
     fields = ["JobId","Partition","Restarts","EndTime","TimeLimit","NodeList","NumNodes","NumCPUs","NumTasks","TRES","JOB_GRES","Nodes","Features","CPU_IDs","TresPerNode"]
     job_data = {}
     if target_job == None:
@@ -25,6 +25,10 @@ def get_scontrol_job_data(target_job = None):
     
     # Split up space-delimited output into a job dictionary 
     output = out.decode('utf-8','ignore').split("\n")
+    
+    if len(output) <= 1:
+        print("No jobs found")
+        return {}
     for job in output:
         details = job.split(' ')
         for i in details:
@@ -32,6 +36,9 @@ def get_scontrol_job_data(target_job = None):
             job_entry = i.split("=")
 
             # We only care about the fields we've defined, so we ignore the rest
+            gpu_field = system_specifications["node_types"]["GPU Nodes"]["GPU Alloc"]
+            gpu_job_values = system_specifications["node_types"]["GPU Nodes"]["GPU Values"]
+            
             if job_entry[0] in fields:
                 if job_entry[0] == "JobId":
                     JobId = job_entry[1]
@@ -49,15 +56,14 @@ def get_scontrol_job_data(target_job = None):
                         else:
                             cpus_assigned += len(range(int(split_set[0]),int(split_set[1]))) + 1
                     job_data[JobId]["Individual Nodes"][current_node] = cpus_assigned
-
-                elif job_entry[0] == "TresPerNode":
-                    gpu_opts = job_entry[1]
-                    if gpu_opts == "(null)":
-                        job_data[JobId]["GPUAlloc"] = 0
-                    elif gpu_opts == "gpu":
-                        job_data[JobId]["GPUAlloc"] = 1
-                    else:
-                        job_data[JobId]["GPUAlloc"] = gpu_opts.split(":")[-1]
+                
+                # GPU Field 
+                elif job_entry[0] == gpu_field:
+                    gpu_value = job_entry[1]
+                    if job_entry[1] not in gpu_job_values:
+                        print("WARNING: GPU value '%s' which is not listed in the configuration file. Ignoring."%job_entry[1])
+                        pass
+                    job_data[JobId]["GPUAlloc"] = gpu_job_values[job_entry[1]]
 
                 else:
                     entry_label = job_entry[0]
@@ -152,7 +158,8 @@ def get_scontrol_node_data(node_specifications):
                             node_data[Node_Name]["Node_Type"] = ufields[field][1]
 
                 # SLURM shows GPUs either in AllocTRES or CfgTRES. 
-                if field == "AllocTRES" or field == "CfgTRES":
+                gpu_field = node_specifications["node_types"]["GPU Nodes"]["Field"]
+                if field == gpu_field:
                     if "gpu" in j:
                         gpu_count = j.split("gpu")[-1].split("=")[-1]
                         node_data[Node_Name][field] = gpu_count
