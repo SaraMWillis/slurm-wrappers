@@ -1,4 +1,4 @@
-# SLURM Wrappers
+# Slurm Wrappers
 
 > Updated on 04/12/2023 to have a more modular setup. More updates coming.
 
